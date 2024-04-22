@@ -3707,8 +3707,8 @@ pub mod rpc_full {
                     post_simulation_accounts: _,
                     units_consumed,
                     return_data,
-                    inner_instructions: _, // Always `None` due to `enable_cpi_recording = false`
-                } = preflight_bank.simulate_transaction(&transaction, false)
+                    inner_instructions,
+                } = preflight_bank.simulate_transaction(&transaction, true)
                 {
                     match err {
                         TransactionError::BlockhashNotFound => {
@@ -3726,7 +3726,7 @@ pub mod rpc_full {
                             accounts: None,
                             units_consumed: Some(units_consumed),
                             return_data: return_data.map(|return_data| return_data.into()),
-                            inner_instructions: None,
+                            inner_instructions,
                             replacement_blockhash: None,
                         },
                     }

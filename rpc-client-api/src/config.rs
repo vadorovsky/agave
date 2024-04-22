@@ -32,7 +32,7 @@ pub struct RpcSimulateTransactionAccountsConfig {
     pub addresses: Vec<String>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcSimulateTransactionConfig {
     #[serde(default)]
@@ -46,6 +46,20 @@ pub struct RpcSimulateTransactionConfig {
     pub min_context_slot: Option<Slot>,
     #[serde(default)]
     pub inner_instructions: bool,
+}
+
+impl Default for RpcSimulateTransactionConfig {
+    fn default() -> Self {
+        Self {
+            sig_verify: false,
+            replace_recent_blockhash: false,
+            commitment: None,
+            encoding: None,
+            accounts: None,
+            min_context_slot: None,
+            inner_instructions: true,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
