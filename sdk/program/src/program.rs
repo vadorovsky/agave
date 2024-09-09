@@ -249,6 +249,10 @@ pub fn invoke_signed(
     account_infos: &[AccountInfo],
     signers_seeds: &[&[&[u8]]],
 ) -> ProgramResult {
+    crate::msg!("invoke_signed: INSTRUCTION ACCS: {:?}", instruction.accounts);
+    // crate::msg!("invoke_signed: ACCOUNT INFOS: {:?}", account_infos);
+    crate::msg!("invoke_signed: SIGNERZ: {:?}", signers_seeds);
+
     // Check that the account RefCells are consistent with the request
     for account_meta in instruction.accounts.iter() {
         for account_info in account_infos.iter() {
@@ -293,6 +297,9 @@ pub fn invoke_signed_unchecked(
 ) -> ProgramResult {
     #[cfg(target_os = "solana")]
     {
+        crate::msg!("invoke_signed_unchecked: INSTRUCTION ACCS: {:?}", instruction.accounts);
+        // crate::msg!("invoke_signed_unchecked: ACCOUNT INFOS: {:?}", account_infos);
+        crate::msg!("invoke_signed_unchecked: SIGNERZ: {:?}", signers_seeds);
         let instruction = StableInstruction::from(instruction.clone());
         let result = unsafe {
             crate::syscalls::sol_invoke_signed_rust(
