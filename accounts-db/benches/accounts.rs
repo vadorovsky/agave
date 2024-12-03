@@ -181,9 +181,9 @@ where
 }
 
 #[bench]
-fn bench_concurrent_read_write(bencher: &mut Bencher) {
+fn bench_concurrent_read_single_write(bencher: &mut Bencher) {
     store_accounts_with_possible_contention(
-        "concurrent_read_write",
+        "concurrent_read_single_write",
         bencher,
         |accounts, pubkeys| {
             let mut rng = rand::thread_rng();
@@ -200,19 +200,23 @@ fn bench_concurrent_read_write(bencher: &mut Bencher) {
 }
 
 #[bench]
-fn bench_concurrent_scan_write(bencher: &mut Bencher) {
-    store_accounts_with_possible_contention("concurrent_scan_write", bencher, |accounts, _| loop {
-        test::black_box(
-            accounts
-                .load_by_program(
-                    &Ancestors::default(),
-                    0,
-                    AccountSharedData::default().owner(),
-                    &ScanConfig::default(),
-                )
-                .unwrap(),
-        );
-    })
+fn bench_concurrent_scan_single_write(bencher: &mut Bencher) {
+    store_accounts_with_possible_contention(
+        "concurrent_scan_single_write",
+        bencher,
+        |accounts, _| loop {
+            test::black_box(
+                accounts
+                    .load_by_program(
+                        &Ancestors::default(),
+                        0,
+                        AccountSharedData::default().owner(),
+                        &ScanConfig::default(),
+                    )
+                    .unwrap(),
+            );
+        },
+    )
 }
 
 #[bench]
