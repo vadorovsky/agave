@@ -311,20 +311,20 @@ impl ReadOnlyAccountsCache {
 
         let mut num_evicts = 0;
         while data_size.load(Ordering::Relaxed) > target_data_size {
-            let key = {
-                let shard = cache
-                    .shards()
-                    .choose(&mut rng)
-                    // PANICS: It's practically impossible to end up with 0
-                    // shards in the dashmap. The default number of shards is
-                    // determined here:
-                    // https://github.com/xacrimon/dashmap/blob/v.5.5.3/src/lib.rs#L66-L71
-                    // Which relies on:
-                    //
-                    // Which would return 0 only if there are 0 CPUs.
-                    .unwrap();
+            let shard = cache
+                .shards()
+                .choose(&mut rng)
+                // PANICS: It's practically impossible to end up with 0
+                // shards in the dashmap. The default number of shards is
+                // determined here:
+                // https://github.com/xacrimon/dashmap/blob/v.5.5.3/src/lib.rs#L66-L71
+                // Which relies on:
+                //
+                // Which would return 0 only if there are 0 CPUs.
+                .unwrap();
+            let (key, account_size) = {
                 let shard = shard.read();
-                let (key, _) = match shard
+                let (key, entry) = match shard
                     .iter()
                     .take(evict_sample_size)
                     .min_by_key(|(_, entry)| entry.get().last_update_time.load(Ordering::Relaxed))
@@ -335,10 +335,12 @@ impl ReadOnlyAccountsCache {
                     None => continue,
                 };
                 // Make it owned, to release the read lock.
-                key.to_owned()
+                (key.to_owned(), entry.get().account.data().len())
             };
 
-            Self::do_remove(&key, cache, data_size);
+            shard.write().remove_entry(&key);
+            let account_size = CACHE_ENTRY_SIZE + account_size;
+            data_size.fetch_sub(account_size, Ordering::Relaxed);
             num_evicts += 1;
         }
         num_evicts
