@@ -2139,7 +2139,7 @@ pub mod tests {
             assert_eq!(
                 one_ref_accounts_account_shared_data
                     .iter()
-                    .map(|meta| meta.to_account_shared_data())
+                    .map(|meta| meta.into())
                     .collect::<Vec<_>>(),
                 vec![account_with_1_ref]
             );
@@ -2215,7 +2215,7 @@ pub mod tests {
                 .accounts
                 .get_stored_account_meta_callback(0, |account| {
                     assert_eq!(account.pubkey(), pk_with_2_refs);
-                    account.to_account_shared_data()
+                    account.into()
                 })
                 .unwrap();
             assert_eq!(account, account_shared_data_with_2_refs);
@@ -2329,7 +2329,7 @@ pub mod tests {
             assert_eq!(
                 one_ref_accounts_account_shared_data
                     .iter()
-                    .map(|meta| meta.to_account_shared_data())
+                    .map(|meta| meta.into())
                     .collect::<Vec<_>>(),
                 vec![account_with_1_ref]
             );
@@ -2362,9 +2362,7 @@ pub mod tests {
             let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
             let accounts_shrunk_same_slot = storage
                 .accounts
-                .get_stored_account_meta_callback(0, |account| {
-                    (*account.pubkey(), account.to_account_shared_data())
-                })
+                .get_stored_account_meta_callback(0, |account| (*account.pubkey(), account.into()))
                 .unwrap();
             let mut count = 0;
             storage.accounts.scan_accounts(|_| {
@@ -3405,7 +3403,7 @@ pub mod tests {
                                 .new_storage()
                                 .accounts
                                 .scan_accounts(|meta| {
-                                    two.push((*meta.pubkey(), meta.to_account_shared_data()));
+                                    two.push((*meta.pubkey(), meta.into()));
                                 });
 
                             compare_all_accounts(&initial_accounts, &two[..]);

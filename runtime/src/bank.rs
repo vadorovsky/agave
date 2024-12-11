@@ -3233,7 +3233,7 @@ impl Bank {
                 self.get_account(pubkey).is_none(),
                 "{pubkey} repeated in genesis config"
             );
-            self.store_account(pubkey, &account.to_account_shared_data());
+            self.store_account(pubkey, &account.into());
             self.capitalization.fetch_add(account.lamports(), Relaxed);
             self.accounts_data_size_initial += account.data().len() as u64;
         }
@@ -3243,7 +3243,7 @@ impl Bank {
                 self.get_account(pubkey).is_none(),
                 "{pubkey} repeated in genesis config"
             );
-            self.store_account(pubkey, &account.to_account_shared_data());
+            self.store_account(pubkey, &account.into());
             self.accounts_data_size_initial += account.data().len() as u64;
         }
 

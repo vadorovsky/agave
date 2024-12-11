@@ -1109,9 +1109,7 @@ impl<'a> LoadedAccount<'a> {
 
     pub fn take_account(&self) -> AccountSharedData {
         match self {
-            LoadedAccount::Stored(stored_account_meta) => {
-                stored_account_meta.to_account_shared_data()
-            }
+            LoadedAccount::Stored(stored_account_meta) => stored_account_meta.into(),
             LoadedAccount::Cached(cached_account) => match cached_account {
                 Cow::Owned(cached_account) => cached_account.account.clone(),
                 Cow::Borrowed(cached_account) => cached_account.account.clone(),
@@ -1162,9 +1160,6 @@ impl<'a> ReadableAccount for LoadedAccount<'a> {
             LoadedAccount::Stored(stored_account_meta) => stored_account_meta.rent_epoch(),
             LoadedAccount::Cached(cached_account) => cached_account.account.rent_epoch(),
         }
-    }
-    fn to_account_shared_data(&self) -> AccountSharedData {
-        self.take_account()
     }
 }
 
@@ -6480,7 +6475,7 @@ impl AccountsDb {
                 let txn = txs.map(|txs| *txs.get(index).expect("txs must be present if provided"));
                 let mut account_info = AccountInfo::default();
                 accounts_and_meta_to_store.account_default_if_zero_lamport(index, |account| {
-                    let account_shared_data = account.to_account_shared_data();
+                    let account_shared_data = account.into();
                     let pubkey = account.pubkey();
                     account_info = AccountInfo::new(StorageLocation::Cached, account.lamports());
 

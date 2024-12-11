@@ -96,7 +96,7 @@ impl StakesCache {
         debug_assert_ne!(account.lamports(), 0u64);
         if solana_vote_program::check_id(owner) {
             if VoteStateVersions::is_correct_size_and_initialized(account.data()) {
-                match VoteAccount::try_from(account.to_account_shared_data()) {
+                match VoteAccount::try_from(account.into()) {
                     Ok(vote_account) => {
                         // drop the old account after releasing the lock
                         let _old_vote_account = {
@@ -124,7 +124,7 @@ impl StakesCache {
                 };
             };
         } else if solana_stake_program::check_id(owner) {
-            match StakeAccount::try_from(account.to_account_shared_data()) {
+            match StakeAccount::try_from(account.into()) {
                 Ok(stake_account) => {
                     let mut stakes = self.0.write().unwrap();
                     stakes.upsert_stake_delegation(

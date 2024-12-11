@@ -144,7 +144,7 @@ where
             lamports: 1,
             ..Default::default()
         }
-        .to_account_shared_data(),
+        .into(),
     )
     .take(num_keys)
     .collect();

@@ -373,7 +373,7 @@ mod tests {
         let mut expected_accounts_map = HashMap::new();
         for i in 0..num_accounts {
             storable_accounts.account_default_if_zero_lamport(i, |account| {
-                expected_accounts_map.insert(*account.pubkey(), account.to_account_shared_data());
+                expected_accounts_map.insert(*account.pubkey(), account.into());
             });
         }
 

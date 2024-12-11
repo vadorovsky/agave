@@ -156,8 +156,7 @@ impl<'append_vec> AppendVecStoredAccountMeta<'append_vec> {
 
     fn sanitize_lamports(&self) -> bool {
         // Sanitize 0 lamports to ensure to be same as AccountSharedData::default()
-        self.account_meta.lamports != 0
-            || self.to_account_shared_data() == AccountSharedData::default()
+        self.account_meta.lamports != 0 || self.into() == AccountSharedData::default()
     }
 
     fn ref_executable_byte(&self) -> &u8 {
@@ -748,10 +747,9 @@ impl AppendVec {
     /// This is on the critical path of tx processing for accounts not in the read or write caches.
     pub(crate) fn get_account_shared_data(&self, offset: usize) -> Option<AccountSharedData> {
         match &self.backing {
-            AppendVecFileBacking::Mmap(_) => self
-                .get_stored_account_meta_callback(offset, |account| {
-                    account.to_account_shared_data()
-                }),
+            AppendVecFileBacking::Mmap(_) => {
+                self.get_stored_account_meta_callback(offset, |account| account.into())
+            }
             AppendVecFileBacking::File(file) => {
                 let mut buf = [0u8; PAGE_SIZE as usize];
                 let bytes_read = read_into_buffer(file, self.len(), offset, &mut buf).ok()?;
@@ -774,7 +772,7 @@ impl AppendVec {
                         hash,
                     });
                     // data is within `buf`, so just allocate a new vec for data
-                    account.to_account_shared_data()
+                    account.into()
                 } else {
                     // not enough was read from file to get `data`
                     assert!(data_len <= MAX_PERMITTED_DATA_LENGTH, "{data_len}");
@@ -831,7 +829,7 @@ impl AppendVec {
             assert!(accounts_equal(&r_callback, r2.as_ref().unwrap()));
             assert_eq!(sizes, vec![r_callback.stored_size()]);
             let meta = r_callback.meta().clone();
-            Some((meta, r_callback.to_account_shared_data()))
+            Some((meta, r_callback.into()))
         });
         if result.is_none() {
             assert!(self
@@ -1555,7 +1553,7 @@ pub mod tests {
         assert_eq!(av.accounts_count(), size);
         av.scan_accounts(|v| {
             let account = create_test_account(sample + 1);
-            let recovered = v.to_account_shared_data();
+            let recovered = v.into();
             assert_eq!(recovered, account.1);
             sample += 1;
         });

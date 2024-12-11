@@ -2375,7 +2375,7 @@ fn test_hash_stored_account() {
         stored_size: CACHE_VIRTUAL_STORED_SIZE as usize,
         hash: &hash,
     });
-    let account = stored_account.to_account_shared_data();
+    let account: AccountSharedData = stored_account.into();
 
     let expected_account_hash =
         AccountHash(Hash::from_str("4xuaE8UfH8EYsPyDZvJXUScoZSyxUJf2BpzVMLTFh497").unwrap());
@@ -7075,7 +7075,7 @@ fn get_all_accounts_from_storages<'a>(
         .flat_map(|storage| {
             let mut vec = Vec::default();
             storage.accounts.scan_accounts(|account| {
-                vec.push((*account.pubkey(), account.to_account_shared_data()));
+                vec.push((*account.pubkey(), account.into()));
             });
             // make sure scan_pubkeys results match
             // Note that we assume traversals are both in the same order, but this doesn't have to be true.

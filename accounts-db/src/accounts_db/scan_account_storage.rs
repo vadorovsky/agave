@@ -677,7 +677,7 @@ mod tests {
                     let copied_storage = accounts_db.create_and_insert_store(slot, 10000, "test");
                     let mut all_accounts = Vec::default();
                     storage.accounts.scan_accounts(|acct| {
-                        all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
+                        all_accounts.push((*acct.pubkey(), acct.into()));
                     });
                     let accounts = all_accounts
                         .iter()
@@ -711,7 +711,7 @@ mod tests {
                 let copied_storage = accounts_db.create_and_insert_store(slot, 10000, "test");
                 let mut all_accounts = Vec::default();
                 storage.accounts.scan_accounts(|acct| {
-                    all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
+                    all_accounts.push((*acct.pubkey(), acct.into()));
                 });
                 let accounts = all_accounts
                     .iter()

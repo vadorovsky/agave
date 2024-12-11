@@ -78,14 +78,6 @@ impl<'a> ReadableAccount for AccountForStorage<'a> {
             AccountForStorage::StoredAccountMeta(account) => account.rent_epoch(),
         }
     }
-    fn to_account_shared_data(&self) -> AccountSharedData {
-        match self {
-            AccountForStorage::AddressAndAccount((_pubkey, account)) => {
-                account.to_account_shared_data()
-            }
-            AccountForStorage::StoredAccountMeta(account) => account.to_account_shared_data(),
-        }
-    }
 }
 
 lazy_static! {

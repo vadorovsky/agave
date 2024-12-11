@@ -54,7 +54,7 @@ fn create_funded_accounts(bank: &Bank, num: usize) -> Vec<Keypair> {
                 executable: false,
                 rent_epoch: Epoch::MAX,
             }
-            .to_account_shared_data(),
+            .into(),
         );
     });
 
