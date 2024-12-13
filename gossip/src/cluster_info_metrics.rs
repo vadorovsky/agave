@@ -171,6 +171,7 @@ pub struct GossipStats {
     pub(crate) push_vote_read: Counter,
     pub(crate) repair_peers: Counter,
     pub(crate) require_stake_for_gossip_unknown_stakes: Counter,
+    pub(crate) save_contact_info_time: Counter,
     pub(crate) skip_pull_response_shred_version: Counter,
     pub(crate) skip_pull_shred_version: Counter,
     pub(crate) skip_push_message_shred_version: Counter,
@@ -565,6 +566,11 @@ pub(crate) fn submit_gossip_stats(
         (
             "require_stake_for_gossip_unknown_stakes",
             stats.require_stake_for_gossip_unknown_stakes.clear(),
+            i64
+        ),
+        (
+            "save_contact_info_time",
+            stats.save_contact_info_time.clear(),
             i64
         ),
         ("trim_crds_table", stats.trim_crds_table.clear(), i64),
