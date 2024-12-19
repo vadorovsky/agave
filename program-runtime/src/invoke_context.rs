@@ -194,7 +194,7 @@ pub struct InvokeContext<'a> {
     /// Runtime configurations used to provision the invocation environment.
     pub environment_config: EnvironmentConfig<'a>,
     /// The compute budget for the current invocation.
-    compute_budget: ComputeBudget,
+    compute_budget: &'a ComputeBudget,
     /// Instruction compute meter, for tracking compute units consumed against
     /// the designated compute budget during program execution.
     compute_meter: RefCell<u64>,
@@ -213,15 +213,16 @@ impl<'a> InvokeContext<'a> {
         program_cache_for_tx_batch: &'a mut ProgramCacheForTxBatch,
         environment_config: EnvironmentConfig<'a>,
         log_collector: Option<Rc<RefCell<LogCollector>>>,
-        compute_budget: ComputeBudget,
+        compute_budget: &'a ComputeBudget,
     ) -> Self {
+        let compute_unit_limit = compute_budget.compute_unit_limit;
         Self {
             transaction_context,
             program_cache_for_tx_batch,
             environment_config,
             log_collector,
             compute_budget,
-            compute_meter: RefCell::new(compute_budget.compute_unit_limit),
+            compute_meter: RefCell::new(compute_unit_limit),
             execute_time: None,
             timings: ExecuteDetailsTimings::default(),
             syscall_context: Vec::new(),
@@ -766,7 +767,7 @@ macro_rules! with_mock_invoke_context {
             &mut program_cache_for_tx_batch,
             environment_config,
             Some(LogCollector::new_ref()),
-            compute_budget,
+            &compute_budget,
         );
     };
 }

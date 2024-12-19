@@ -996,7 +996,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 sysvar_cache,
             ),
             log_collector.clone(),
-            compute_budget,
+            &compute_budget,
         );
 
         let mut process_message_time = Measure::start("process_message_time");
