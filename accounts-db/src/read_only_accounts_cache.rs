@@ -3,6 +3,7 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
+    ahash::RandomState as AHashRandomState,
     dashmap::{mapref::entry::Entry, DashMap},
     log::*,
     rand::{
@@ -30,6 +31,11 @@ use {
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 const CACHE_ENTRY_SIZE: usize =
     std::mem::size_of::<ReadOnlyAccountCacheEntry>() + 2 * std::mem::size_of::<ReadOnlyCacheKey>();
+
+/// Number of cache shards. This number is close to the number of accounts
+/// in cache observed on mainnet beta validators, therefore it should result
+/// in each accout having its own shard and reduced amount of locks.
+const SHARDS: usize = 65536;
 
 type ReadOnlyCacheKey = Pubkey;
 
@@ -72,7 +78,7 @@ struct AtomicReadOnlyCacheStats {
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 #[derive(Debug)]
 pub(crate) struct ReadOnlyAccountsCache {
-    cache: Arc<DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry>>,
+    cache: Arc<DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry, AHashRandomState>>,
     _max_data_size_lo: usize,
     _max_data_size_hi: usize,
     data_size: Arc<AtomicUsize>,
@@ -98,7 +104,10 @@ impl ReadOnlyAccountsCache {
     ) -> Self {
         assert!(max_data_size_lo <= max_data_size_hi);
         assert!(evict_sample_size > 0);
-        let cache = Arc::new(DashMap::default());
+        let cache = Arc::new(DashMap::with_hasher_and_shard_amount(
+            AHashRandomState::default(),
+            SHARDS,
+        ));
         let data_size = Arc::new(AtomicUsize::default());
         let stats = Arc::new(AtomicReadOnlyCacheStats::default());
         let evictor_exit_flag = Arc::new(AtomicBool::new(false));
@@ -205,7 +214,7 @@ impl ReadOnlyAccountsCache {
     /// Removes `key` from the cache, if present, and returns the removed account
     fn do_remove(
         key: &ReadOnlyCacheKey,
-        cache: &DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry>,
+        cache: &DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry, AHashRandomState>,
         data_size: &AtomicUsize,
     ) -> Option<AccountSharedData> {
         let (_, entry) = cache.remove(key)?;
@@ -257,7 +266,7 @@ impl ReadOnlyAccountsCache {
         max_data_size_hi: usize,
         data_size: Arc<AtomicUsize>,
         evict_sample_size: usize,
-        cache: Arc<DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry>>,
+        cache: Arc<DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry, AHashRandomState>>,
         stats: Arc<AtomicReadOnlyCacheStats>,
     ) -> thread::JoinHandle<()> {
         thread::Builder::new()
@@ -305,7 +314,7 @@ impl ReadOnlyAccountsCache {
         target_data_size: usize,
         data_size: &AtomicUsize,
         evict_sample_size: usize,
-        cache: &DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry>,
+        cache: &DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry, AHashRandomState>,
     ) -> u64 {
         let mut rng = thread_rng();
 
