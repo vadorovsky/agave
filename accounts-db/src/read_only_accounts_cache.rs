@@ -29,6 +29,11 @@ use {
 const CACHE_ENTRY_SIZE: usize =
     std::mem::size_of::<ReadOnlyAccountCacheEntry>() + 2 * std::mem::size_of::<ReadOnlyCacheKey>();
 
+/// Number of cache shards. This number is close to the number of accounts
+/// in cache observed on mainnet beta validators, therefore it should result
+/// in each accout having its own shard and reduced amount of locks.
+const SHARDS: usize = 65536;
+
 type ReadOnlyCacheKey = Pubkey;
 
 #[derive(Debug)]
@@ -105,7 +110,10 @@ impl ReadOnlyAccountsCache {
         ms_to_skip_lru_update: u32,
     ) -> Self {
         assert!(max_data_size_lo <= max_data_size_hi);
-        let cache = Arc::new(DashMap::with_hasher(AHashRandomState::default()));
+        let cache = Arc::new(DashMap::with_hasher_and_shard_amount(
+            AHashRandomState::default(),
+            SHARDS,
+        ));
         let queue = Arc::new(Mutex::<IndexList<ReadOnlyCacheKey>>::default());
         let data_size = Arc::new(AtomicUsize::default());
         let stats = Arc::new(AtomicReadOnlyCacheStats::default());
