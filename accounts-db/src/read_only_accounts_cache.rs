@@ -514,21 +514,17 @@ mod tests {
         num_accounts: (usize, usize),
         evict_sample_size: usize,
     ) {
+        const DATA_SIZE: usize = 19;
         let mut evicts_from_newer_half: u64 = 0;
         let mut evicts: u64 = 0;
-
+        let (num_accounts_hi, num_accounts_lo) = num_accounts;
+        let max_cache_size = num_accounts_lo * (CACHE_ENTRY_SIZE + DATA_SIZE);
         for _ in 0..10 {
-            const SEED: [u8; 32] = [0xdb; 32];
-            const DATA_SIZE: usize = 19;
-            let (num_accounts_hi, num_accounts_lo) = num_accounts;
-            let max_cache_size = num_accounts_lo * (CACHE_ENTRY_SIZE + DATA_SIZE);
-            let mut rng = ChaChaRng::from_seed(SEED);
             let cache = ReadOnlyAccountsCache::new(
                 max_cache_size,
                 usize::MAX, // <-- do not evict in the background
                 evict_sample_size,
             );
-            let slots: Vec<Slot> = repeat_with(|| rng.gen_range(0..1000)).take(5).collect();
             // A local hash map, where we store all the accounts we inserted, even
             // the ones that the cache is going to evict.
             let mut hash_map = HashMap::<ReadOnlyCacheKey, (AccountSharedData, Slot, u64)>::new();
@@ -536,13 +532,13 @@ mod tests {
             for _ in 0..num_accounts_hi {
                 let pubkey = Pubkey::new_unique();
                 let account = AccountSharedData::from(Account {
-                    lamports: rng.gen(),
+                    lamports: 100,
                     data: data.clone(),
-                    executable: rng.gen(),
-                    rent_epoch: rng.gen(),
+                    executable: false,
+                    rent_epoch: 0,
                     owner: pubkey,
                 });
-                let slot = *slots.choose(&mut rng).unwrap();
+                let slot = 0;
                 cache.store(pubkey, slot, account.clone());
                 let last_update_time = cache
                     .cache
@@ -572,10 +568,46 @@ mod tests {
             }
         }
 
+        // According to IEEE's research[0], for a cache with capacity C, a
+        // sample of size K, where elements are described as a set
+        // {x_d: 1 <= d <= C}, where x_1 is the newest element, the most
+        // unlikely to be evicted, the eviction probability of the object x_d
+        // with ranking d is:
+        //
+        // Q(x_d) = (d^K - (d - 1)^K)/C^K
+        //
+        // We want to check the probability of an element from the older half
+        // to be evicted. In our case, ranking is simply the chronological
+        // order of timestamps. We could define a range of d we are interested
+        // in as C/2..C and therefore, define our sum as:
+        //
+        // ∑{d=1}^(C/2) (d^K - (d - 1)^K)/C^K
+        //
+        // We compute that sum and check whether the percentage of evicts done
+        // on newer elements doesn't exceed it.
+        //
+        // [0] https://par.nsf.gov/servlets/purl/10447269 (paragraph 3.1)
+        let mut probability: f64 = 0.0;
+        let evict_sample_size = evict_sample_size as u32;
+        // for d in (num_accounts_hi as u128 / 2)..num_accounts_hi as u128 {
+        for d in 1_u128..=(num_accounts_hi as u128 / 2) {
+            let numerator: u128 = d.pow(evict_sample_size as u32) - (d - 1).pow(evict_sample_size);
+            let denominator: u128 = (num_accounts_hi as u128).pow(evict_sample_size);
+            println!("numerator (u128): {numerator}");
+            println!("denominator (u128): {denominator}");
+            println!("numerator (f64): {}", numerator as f64);
+            println!("denominator (f64): {}", denominator as f64);
+            let fraction: f64 = numerator as f64 / denominator as f64;
+            println!("single probability: {fraction}");
+            probability += fraction;
+        }
+        println!("probability: {probability}");
+
         // Ensure that less than 1% of evictions affected the newest 50%
         // of accounts.
         let error_margin = (evicts_from_newer_half as f64) / (evicts as f64);
-        assert!(error_margin < 0.05);
+        println!("error_margin: {error_margin}");
+        assert!(error_margin <= probability);
     }
 
     #[test_matrix([8, 10, 16])]
