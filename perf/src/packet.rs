@@ -3,6 +3,7 @@ pub use solana_packet::{self, Meta, Packet, PacketFlags, PACKET_DATA_SIZE};
 use {
     crate::{cuda_runtime::PinnedVec, recycler::Recycler},
     bincode::config::Options,
+    bytes::Bytes,
     rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     std::{
@@ -21,7 +22,7 @@ pub const NUM_RCVMMSGS: usize = 64;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct PacketBatch {
-    packets: PinnedVec<Packet>,
+    packets: PinnedVec<Bytes>,
 }
 
 pub type PacketBatchRecycler = Recycler<PinnedVec<Packet>>;
