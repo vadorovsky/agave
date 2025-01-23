@@ -95,6 +95,18 @@ impl<T: Clone + Default + Sized> From<PinnedVec<T>> for Vec<T> {
     }
 }
 
+impl<T: Clone + Default + Sized> FromIterator<T> for PinnedVec<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let x = Vec::from_iter(iter);
+        Self {
+            x,
+            pinned: false,
+            pinnable: false,
+            recycler: Weak::default(),
+        }
+    }
+}
+
 impl<'a, T: Clone + Default + Sized> IntoIterator for &'a PinnedVec<T> {
     type Item = &'a T;
     type IntoIter = Iter<'a, T>;

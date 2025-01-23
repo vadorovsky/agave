@@ -7,20 +7,26 @@ use solana_frozen_abi_macro::AbiExample;
 #[cfg(feature = "bincode")]
 use {
     bincode::{Options, Result},
-    std::io::Write,
+    std::{
+        cmp,
+        io::{self, Write},
+    },
 };
 use {
     bitflags::bitflags,
+    bytes::{BufMut, Bytes, BytesMut},
+    smallvec::SmallVec,
     std::{
         fmt,
         net::{IpAddr, Ipv4Addr, SocketAddr},
+        ops::{Deref, DerefMut},
         slice::SliceIndex,
     },
 };
 #[cfg(feature = "serde")]
 use {
     serde_derive::{Deserialize, Serialize},
-    serde_with::{serde_as, Bytes},
+    serde_with::serde_as,
 };
 
 #[cfg(test)]
@@ -89,6 +95,84 @@ impl ::solana_frozen_abi::abi_example::EvenAsOpaque for PacketFlags {
     const TYPE_NAME_MATCHER: &'static str = "::_::InternalBitFlags";
 }
 
+/// Wrapper over [`BytesMut`] which provides a [`Write`] trait implementation.
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[derive(Clone, Eq, PartialEq)]
+pub struct WritableBytesMut(BytesMut);
+
+impl WritableBytesMut {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for WritableBytesMut {
+    fn default() -> Self {
+        Self(BytesMut::default())
+    }
+}
+
+impl Deref for WritableBytesMut {
+    type Target = BytesMut;
+
+    #[inline]
+    fn deref(&self) -> &BytesMut {
+        &self.0
+    }
+}
+
+impl DerefMut for WritableBytesMut {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl io::Write for WritableBytesMut {
+    fn write(&mut self, src: &[u8]) -> io::Result<usize> {
+        let n = cmp::min(self.0.remaining_mut(), src.len());
+
+        self.0.put_slice(&src[..n]);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[derive(Clone, Eq)]
+pub enum PacketData {
+    /// A mutable byte buffer.
+    ///
+    /// Intended to be used where we are responsible for receiving messages
+    /// from sockets (UDP).
+    Buffer(WritableBytesMut),
+    /// Immutable chunks.
+    ///
+    /// Intended to be used with QUIC, where we just want to consume chunks
+    /// from quinn.
+    Chunks(SmallVec<[Bytes; 2]>),
+}
+
+impl PartialEq for PacketData {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            Self::Buffer(buffer) => match other {
+                Self::Buffer(other_buffer) => buffer.eq(other_buffer),
+                _ => false,
+            },
+            Self::Chunks(chunks) => match other {
+                Self::Chunks(other_chunks) => chunks.eq(other_chunks),
+                _ => false,
+            },
+        }
+    }
+}
+
 // serde_as is used as a work around because array isn't supported by serde
 // (and serde_bytes).
 //
@@ -123,16 +207,14 @@ impl ::solana_frozen_abi::abi_example::EvenAsOpaque for PacketFlags {
 #[derive(Clone, Eq)]
 #[repr(C)]
 pub struct Packet {
-    // Bytes past Packet.meta.size are not valid to read from.
-    // Use Packet.data(index) to read from the buffer.
-    #[cfg_attr(feature = "serde", serde_as(as = "Bytes"))]
-    buffer: [u8; PACKET_DATA_SIZE],
     meta: Meta,
+    data: PacketData,
 }
 
 impl Packet {
-    pub fn new(buffer: [u8; PACKET_DATA_SIZE], meta: Meta) -> Self {
-        Self { buffer, meta }
+    pub fn new(meta: Meta) -> Self {
+        let data = PacketData::Buffer(WritableBytesMut::new());
+        Self { data, meta }
     }
 
     /// Returns an immutable reference to the underlying buffer up to
@@ -151,7 +233,10 @@ impl Packet {
         if self.meta.discard() {
             None
         } else {
-            self.buffer.get(..self.meta.size)?.get(index)
+            match self.data {
+                PacketData::Buffer(ref buffer) => buffer.get(index),
+                PacketData::Chunks(ref chunks) => chunks.first()?.get(index),
+            }
         }
     }
 
@@ -159,9 +244,13 @@ impl Packet {
     /// write into. The caller is responsible for updating Packet.meta.size
     /// after writing to the buffer.
     #[inline]
-    pub fn buffer_mut(&mut self) -> &mut [u8] {
+    pub fn buffer_mut(&mut self) -> Option<&mut [u8]> {
         debug_assert!(!self.meta.discard());
-        &mut self.buffer[..]
+
+        match self.data {
+            PacketData::Buffer(ref mut buffer) => Some(&mut buffer[..]),
+            PacketData::Chunks(_) => None,
+        }
     }
 
     #[inline]
@@ -174,26 +263,51 @@ impl Packet {
         &mut self.meta
     }
 
-    #[cfg(feature = "bincode")]
-    pub fn from_data<T: Encode>(dest: Option<&SocketAddr>, data: T) -> Result<Self> {
-        let mut packet = Self::default();
-        Self::populate_packet(&mut packet, dest, &data)?;
-        Ok(packet)
+    pub fn from_chunks(dest: Option<&SocketAddr>, chunks: &[Bytes]) -> Self {
+        let mut meta = Meta::default();
+        meta.size = chunks.iter().map(|chunk| chunk.len()).sum();
+        if let Some(dest) = dest {
+            meta.set_socket_addr(dest);
+        }
+        let chunks = chunks
+            .iter()
+            .map(|chunk| chunk.clone())
+            .collect::<SmallVec<[Bytes; 2]>>();
+        let data = PacketData::Chunks(chunks);
+        Self { data, meta }
     }
 
     #[cfg(feature = "bincode")]
-    pub fn populate_packet<T: Encode>(
+    pub fn from_data<T: serde::Serialize>(dest: Option<&SocketAddr>, data: T) -> Result<Self> {
+        let mut buffer = WritableBytesMut::new();
+        bincode::serialize_into(&mut buffer, &data)?;
+        let mut meta = Meta::default();
+        meta.size = buffer.len();
+        if let Some(dest) = dest {
+            meta.set_socket_addr(dest);
+        }
+        let data = PacketData::Buffer(buffer);
+        Ok(Self { data, meta })
+    }
+
+    #[cfg(feature = "bincode")]
+    pub fn populate_packet<T: serde::Serialize>(
         &mut self,
         dest: Option<&SocketAddr>,
         data: &T,
     ) -> Result<()> {
         debug_assert!(!self.meta.discard());
-        let mut wr = std::io::Cursor::new(self.buffer_mut());
-        <T as Encode>::encode(data, &mut wr)?;
-        self.meta.size = wr.position() as usize;
-        if let Some(dest) = dest {
-            self.meta.set_socket_addr(dest);
+        match self.data {
+            PacketData::Buffer(ref mut buffer) => {
+                bincode::serialize_into(&mut *buffer, data)?;
+                self.meta.size = buffer.len();
+                if let Some(dest) = dest {
+                    self.meta.set_socket_addr(dest);
+                }
+            }
+            PacketData::Chunks(_) => {}
         }
+
         Ok(())
     }
 
@@ -223,13 +337,11 @@ impl fmt::Debug for Packet {
     }
 }
 
-#[allow(clippy::uninit_assumed_init)]
 impl Default for Packet {
     fn default() -> Self {
-        let buffer = std::mem::MaybeUninit::<[u8; PACKET_DATA_SIZE]>::uninit();
         Self {
-            buffer: unsafe { buffer.assume_init() },
             meta: Meta::default(),
+            data: PacketData::Buffer(WritableBytesMut::new()),
         }
     }
 }
@@ -241,6 +353,19 @@ impl PartialEq for Packet {
 }
 
 impl Meta {
+    pub fn new(size: usize, socket_addr: Option<&SocketAddr>) -> Self {
+        let (addr, port) = match socket_addr {
+            Some(socket_addr) => (socket_addr.ip(), socket_addr.port()),
+            None => (IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+        };
+        Self {
+            size,
+            addr,
+            port,
+            flags: PacketFlags::empty(),
+        }
+    }
+
     pub fn socket_addr(&self) -> SocketAddr {
         SocketAddr::new(self.addr, self.port)
     }

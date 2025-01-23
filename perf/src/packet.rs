@@ -73,7 +73,7 @@ impl PacketBatch {
         batch
     }
 
-    pub fn new_unpinned_with_recycler_data_and_dests<T: solana_packet::Encode>(
+    pub fn new_unpinned_with_recycler_data_and_dests<T: serde::Serialize>(
         recycler: &PacketBatchRecycler,
         name: &'static str,
         dests_and_data: &[(SocketAddr, T)],
@@ -206,6 +206,13 @@ impl<'a> IntoParallelIterator for &'a mut PacketBatch {
     }
 }
 
+impl FromIterator<Packet> for PacketBatch {
+    fn from_iter<T: IntoIterator<Item = Packet>>(iter: T) -> Self {
+        let packets = PinnedVec::from_iter(iter);
+        Self { packets }
+    }
+}
+
 impl From<PacketBatch> for Vec<Packet> {
     fn from(batch: PacketBatch) -> Self {
         batch.packets.into()
@@ -217,9 +224,10 @@ pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<Pa
         .chunks(chunk_size)
         .map(|batch_items| {
             let mut batch = PacketBatch::with_capacity(batch_items.len());
-            batch.resize(batch_items.len(), Packet::default());
-            for (item, packet) in batch_items.iter().zip(batch.packets.iter_mut()) {
-                Packet::populate_packet(packet, None, item).expect("serialize request");
+            // batch.resize(batch_items.len(), Packet::default());
+            for item in batch_items.iter() {
+                let packet = Packet::from_data(None, item).expect("serialize request");
+                batch.push(packet);
             }
             batch
         })

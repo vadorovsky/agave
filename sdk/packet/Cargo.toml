@@ -12,12 +12,14 @@ edition = { workspace = true }
 [dependencies]
 bincode = { workspace = true, optional = true }
 bitflags = { workspace = true }
+bytes = { workspace = true, features = ["serde"] }
 cfg_eval = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_derive = { workspace = true, optional = true }
 serde_with = { workspace = true, optional = true, features = ["macros"] }
 solana-frozen-abi = { workspace = true, optional = true, features = ["frozen-abi"] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = ["frozen-abi"] }
+smallvec = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 solana-packet = { path = ".", features = ["dev-context-only-utils"] }

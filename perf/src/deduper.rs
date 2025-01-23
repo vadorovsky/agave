@@ -118,7 +118,7 @@ mod tests {
         },
         rand::SeedableRng,
         rand_chacha::ChaChaRng,
-        solana_packet::{Meta, PACKET_DATA_SIZE},
+        solana_packet::PACKET_DATA_SIZE,
         test_case::test_case,
     };
 
@@ -245,7 +245,7 @@ mod tests {
         let mut rng = ChaChaRng::from_seed(seed);
         let mut deduper = Deduper::<2, [u8]>::new(&mut rng, num_bits);
         assert_eq!(get_capacity::<2>(num_bits, FALSE_POSITIVE_RATE), capacity);
-        let mut packet = Packet::new([0u8; PACKET_DATA_SIZE], Meta::default());
+        let mut packet = Packet::new(Meta::default());
         let mut dup_count = 0usize;
         for _ in 0..num_packets {
             let size = rng.gen_range(0..PACKET_DATA_SIZE);
