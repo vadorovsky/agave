@@ -49,13 +49,12 @@ impl TpuInfo for ClusterTpuInfo {
 
     fn get_leader_tpus(&self, max_count: u64, protocol: Protocol) -> Vec<&SocketAddr> {
         let recorder = self.poh_recorder.read().unwrap();
-        let leaders: Vec<_> = (0..max_count)
-            .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS))
-            .collect();
+        let leaders = (0..max_count)
+            .filter_map(|i| recorder.leader_after_n_slots(i * NUM_CONSECUTIVE_LEADER_SLOTS));
         drop(recorder);
         let mut unique_leaders = vec![];
-        for leader in leaders.iter() {
-            if let Some(addr) = self.recent_peers.get(leader).map(|addr| match protocol {
+        for leader in leaders {
+            if let Some(addr) = self.recent_peers.get(&leader).map(|addr| match protocol {
                 Protocol::UDP => &addr.0,
                 Protocol::QUIC => &addr.1,
             }) {
@@ -73,19 +72,15 @@ impl TpuInfo for ClusterTpuInfo {
         protocol: Protocol,
     ) -> Vec<(&SocketAddr, Slot)> {
         let recorder = self.poh_recorder.read().unwrap();
-        let leaders: Vec<_> = (0..max_count)
-            .rev()
-            .filter_map(|future_slot| {
-                NUM_CONSECUTIVE_LEADER_SLOTS
-                    .checked_mul(future_slot)
-                    .and_then(|slots_in_the_future| {
-                        recorder.leader_and_slot_after_n_slots(slots_in_the_future)
-                    })
-            })
-            .collect();
+        let leaders: Vec<_> = (0..max_count).rev().filter_map(|future_slot| {
+            NUM_CONSECUTIVE_LEADER_SLOTS
+                .checked_mul(future_slot)
+                .and_then(|slots_in_the_future| {
+                    recorder.leader_and_slot_after_n_slots(slots_in_the_future)
+                })
+        });
         drop(recorder);
         let addrs_to_slots = leaders
-            .into_iter()
             .filter_map(|(leader_id, leader_slot)| {
                 self.recent_peers
                     .get(&leader_id)
