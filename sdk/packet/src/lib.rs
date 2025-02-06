@@ -263,12 +263,7 @@ impl Packet {
         &mut self.meta
     }
 
-    pub fn from_chunks(dest: Option<&SocketAddr>, chunks: &[Bytes]) -> Self {
-        let mut meta = Meta::default();
-        meta.size = chunks.iter().map(|chunk| chunk.len()).sum();
-        if let Some(dest) = dest {
-            meta.set_socket_addr(dest);
-        }
+    pub fn from_chunks_with_meta(meta: Meta, chunks: &[Bytes]) -> Self {
         let chunks = chunks
             .iter()
             .map(|chunk| chunk.clone())

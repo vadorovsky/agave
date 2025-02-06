@@ -135,7 +135,7 @@ impl PacketAccumulator {
 impl Into<Packet> for PacketAccumulator {
     fn into(self) -> Packet {
         let Self { meta, chunks, .. } = self;
-        Packet { meta, chunks }
+        Packet::from_chunks_with_meta(meta, chunks.as_slice())
     }
 }
 

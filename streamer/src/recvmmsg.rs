@@ -13,15 +13,12 @@ use {
     },
 };
 use {
-    crate::packet::{Meta, PacketMut},
+    crate::packet::{Meta, Packet},
     std::{cmp, io, net::UdpSocket},
 };
 
 #[cfg(not(target_os = "linux"))]
-pub fn recv_mmsg(
-    socket: &UdpSocket,
-    packets: &mut [PacketMut],
-) -> io::Result</*num packets:*/ usize> {
+pub fn recv_mmsg(socket: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
     let mut i = 0;
     let count = cmp::min(NUM_RCVMMSGS, packets.len());
@@ -82,10 +79,7 @@ fn cast_socket_addr(addr: &sockaddr_storage, hdr: &mmsghdr) -> Option<SocketAddr
 }
 
 #[cfg(target_os = "linux")]
-pub fn recv_mmsg(
-    sock: &UdpSocket,
-    packets: &mut [PacketMut],
-) -> io::Result</*num packets:*/ usize> {
+pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
     // Should never hit this, but bail if the caller didn't provide any Packets
     // to receive into
     if packets.is_empty() {
@@ -105,7 +99,7 @@ pub fn recv_mmsg(
     for (packet, hdr, iov, addr) in
         izip!(packets.iter_mut(), &mut hdrs, &mut iovs, &mut addrs).take(count)
     {
-        let buffer = packet.buffer_mut();
+        let buffer = packet.buffer_mut().expect("packet should be mutable");
         iov.write(iovec {
             iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
             iov_len: buffer.len(),

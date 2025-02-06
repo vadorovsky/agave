@@ -3,10 +3,7 @@
 
 use {
     crate::{
-        packet::{
-            self, PacketBatch, PacketBatchRecycler, PacketMutBatch, PacketMutBatchRecycler,
-            PACKETS_PER_BATCH,
-        },
+        packet::{self, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
         sendmmsg::{batch_send, SendPktsError},
         socket::SocketAddrSpace,
     },
@@ -110,7 +107,7 @@ fn recv_loop(
     socket: &UdpSocket,
     exit: &AtomicBool,
     packet_batch_sender: &PacketBatchSender,
-    recycler: &PacketMutBatchRecycler,
+    recycler: &PacketBatchRecycler,
     stats: &StreamerReceiveStats,
     coalesce: Duration,
     use_pinned_memory: bool,
@@ -119,9 +116,9 @@ fn recv_loop(
 ) -> Result<()> {
     loop {
         let mut packet_batch = if use_pinned_memory {
-            PacketMutBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
+            PacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
         } else {
-            PacketMutBatch::with_capacity(PACKETS_PER_BATCH)
+            PacketBatch::with_capacity(PACKETS_PER_BATCH)
         };
         loop {
             // Check for exit signal, even if socket is busy

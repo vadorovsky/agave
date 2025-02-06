@@ -344,7 +344,7 @@ fn sign_shred_cpu(keypair: &Keypair, packet: &mut Packet) {
     );
     let signature = keypair.sign_message(msg.as_ref());
     trace!("signature {:?}", signature);
-    packet.buffer_mut()[sig].copy_from_slice(signature.as_ref());
+    packet.buffer_mut().expect("packet should be mutable")[sig].copy_from_slice(signature.as_ref());
 }
 
 pub fn sign_shreds_cpu(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mut [PacketBatch]) {
@@ -473,7 +473,7 @@ pub fn sign_shreds_gpu(
                         let sig_ix = packet_ix + num_packets;
                         let sig_start = sig_ix * sig_size;
                         let sig_end = sig_start + sig_size;
-                        packet.buffer_mut()[..sig_size]
+                        packet.buffer_mut().expect("packet should be mutable")[..sig_size]
                             .copy_from_slice(&signatures_out[sig_start..sig_end]);
                     });
             });
@@ -522,7 +522,8 @@ mod tests {
         let keypair = Keypair::new();
         shred.sign(&keypair);
         trace!("signature {}", shred.signature());
-        packet.buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
+        packet.buffer_mut().expect("packet should be mutable")[..shred.payload().len()]
+            .copy_from_slice(shred.payload());
         packet.meta_mut().size = shred.payload().len();
 
         let leader_slots = HashMap::from([(slot, keypair.pubkey())]);

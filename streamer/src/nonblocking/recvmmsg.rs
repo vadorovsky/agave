@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        packet::{Meta, PacketMut},
+        packet::{Meta, Packet},
         recvmmsg::NUM_RCVMMSGS,
     },
     std::{cmp, io},
@@ -13,7 +13,7 @@ use {
 /// returning how many packets were read
 pub async fn recv_mmsg(
     socket: &UdpSocket,
-    packets: &mut [PacketMut],
+    packets: &mut [Packet],
 ) -> io::Result</*num packets:*/ usize> {
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
     let count = cmp::min(NUM_RCVMMSGS, packets.len());
@@ -21,7 +21,7 @@ pub async fn recv_mmsg(
     let mut i = 0;
     for p in packets.iter_mut().take(count) {
         p.meta_mut().size = 0;
-        match socket.try_recv_from(p.buffer_mut()) {
+        match socket.try_recv_from(p.buffer_mut().expect("packet should be mutable")) {
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 break;
             }
@@ -41,7 +41,7 @@ pub async fn recv_mmsg(
 /// Reads the exact number of packets required to fill `packets`
 pub async fn recv_mmsg_exact(
     socket: &UdpSocket,
-    packets: &mut [PacketMut],
+    packets: &mut [Packet],
 ) -> io::Result</*num packets:*/ usize> {
     let total = packets.len();
     let mut remaining = total;

@@ -11,18 +11,13 @@ use {
     },
 };
 pub use {
-    solana_packet::{Meta, Packet, PacketMut, PACKET_DATA_SIZE},
+    solana_packet::{Meta, Packet, PACKET_DATA_SIZE},
     solana_perf::packet::{
-        to_packet_batches, PacketBatch, PacketBatchRecycler, PacketMutBatch,
-        PacketMutBatchRecycler, NUM_PACKETS, PACKETS_PER_BATCH,
+        to_packet_batches, PacketBatch, PacketBatchRecycler, NUM_PACKETS, PACKETS_PER_BATCH,
     },
 };
 
-pub fn recv_from(
-    batch: &mut PacketMutBatch,
-    socket: &UdpSocket,
-    max_wait: Duration,
-) -> Result<usize> {
+pub fn recv_from(batch: &mut PacketBatch, socket: &UdpSocket, max_wait: Duration) -> Result<usize> {
     let mut i = 0;
     //DOCUMENTED SIDE-EFFECT
     //Performance out of the IO without poll
@@ -36,7 +31,7 @@ pub fn recv_from(
     loop {
         batch.resize(
             std::cmp::min(i + NUM_RCVMMSGS, PACKETS_PER_BATCH),
-            PacketMut::default(),
+            Packet::default(),
         );
         match recv_mmsg(socket, &mut batch[i..]) {
             Err(_) if i > 0 => {
