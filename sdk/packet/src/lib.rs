@@ -2,6 +2,8 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
+use std::ops::Range;
+
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi_macro::AbiExample;
 #[cfg(feature = "bincode")]
@@ -144,6 +146,14 @@ impl io::Write for WritableBytesMut {
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[derive(Clone, Eq, PartialEq)]
+pub struct PacketChunk {
+    data: Bytes,
+    range: Range<usize>,
+}
+
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[derive(Clone, Eq)]
 pub enum PacketData {
     /// A mutable byte buffer.
@@ -170,6 +180,44 @@ impl PartialEq for PacketData {
                 _ => false,
             },
         }
+    }
+}
+
+pub enum PacketFragment<'a> {
+    Borrowed(&'a [u8]),
+    Owned(Bytes),
+}
+
+trait PacketIndex {
+    fn start(&self) -> usize;
+    fn end(&self) -> usize;
+
+    fn as_range(&self) -> Range<usize> {
+        self.start()..self.end()
+    }
+}
+
+impl PacketIndex for usize {
+    fn start(&self) -> usize {
+        *self
+    }
+
+    fn end(&self) -> usize {
+        self.saturating_add(1)
+    }
+}
+
+impl PacketIndex for Range<usize> {
+    fn start(&self) -> usize {
+        self.start
+    }
+
+    fn end(&self) -> usize {
+        self.end
+    }
+
+    fn as_range(&self) -> Range<usize> {
+        self.clone()
     }
 }
 
@@ -223,9 +271,9 @@ impl Packet {
     /// Returns None if the index is invalid or if the packet is already marked
     /// as discard.
     #[inline]
-    pub fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    pub fn data<I>(&self, index: I) -> Option<PacketFragment>
     where
-        I: SliceIndex<[u8]>,
+        I: PacketIndex,
     {
         // If the packet is marked as discard, it is either invalid or
         // otherwise should be ignored, and so the payload should not be read
@@ -234,8 +282,29 @@ impl Packet {
             None
         } else {
             match self.data {
-                PacketData::Buffer(ref buffer) => buffer.get(index),
-                PacketData::Chunks(ref chunks) => chunks.first()?.get(index),
+                PacketData::Buffer(ref buffer) => buffer
+                    .get(index.as_range())
+                    .map(|slice| PacketFragment::Borrowed(slice)),
+                PacketData::Chunks(ref chunks) => {
+                    let mut current_start = index.start();
+                    let mut current_end = index.end();
+                    let mut chunks = Vec::with_capacity(chunks);
+                    for chunk in chunks {
+                        if current_start < index.end() {
+                            if current_end > index.end() {
+                                return Some(PacketFragment::Borrowed(
+                                    &chunk[current_start..current_end],
+                                ));
+                            } else {
+                            }
+                        } else {
+                            current_start = current_start.saturating_add(chunk.len());
+                            current_end = current_end.saturating_add(chunk.len());
+                        }
+                    }
+
+                    None
+                }
             }
         }
     }
