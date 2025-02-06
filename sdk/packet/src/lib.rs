@@ -265,11 +265,58 @@ impl Packet {
         Self { data, meta }
     }
 
-    /// Returns an immutable reference to the underlying buffer up to
-    /// packet.meta.size. The rest of the buffer is not valid to read from.
-    /// packet.data(..) returns packet.buffer.get(..packet.meta.size).
+    /// Returns the underlying data of the packet.
+    ///
     /// Returns None if the index is invalid or if the packet is already marked
     /// as discard.
+    ///
+    /// # Memory usage
+    ///
+    /// This method might or might not make a copy of the packet data,
+    /// depending on the following cases:
+    ///
+    /// 1. The packet contains one buffer. That's the case if the packet was
+    ///    initialized with `Packet::default()`, `Packet::new()` with an
+    ///    intention to fill the buffer by the caller.
+    ///    In such case, no copy is made and the method returns a slice
+    ///    pointing to the buffer.
+    /// 2. The packet contains one chunk. That's the case if only one chunk was
+    ///    provided through `Packet::from_chunks`, which usually happens if
+    ///    [`quinn`] fills only one chunk.
+    ///    In such case, no copy is made.
+    /// 3. The packet contains many chunks, but the requested range fits within
+    ///    the bounds of one chunk. In that case, we can return a slice of that
+    ///    chunk.
+    ///    In such case, no copy is made.
+    /// 4. There are many chunks, the requested range represents data holded by
+    ///    multiple chunks.
+    ///    In such case, a copy is made.
+    ///
+    /// Given the lack of guarantee, it's recommended to call this method only
+    /// once in the given part of code.
+    ///
+    /// For example, the following code should be avoided:
+    ///
+    /// ```rust
+    /// # use solana_packet::Packet;
+    /// # let packet = Packet::default();
+    /// let foo = packet.data(..256);
+    /// let bar = packet.data(256..1024);
+    /// ```
+    ///
+    /// Because it might make a copy, if the packet has multiple chunks.
+    ///
+    /// Instead, the following code is preferred:
+    ///
+    /// ```rust
+    /// # use solana_packet::Packet;
+    /// # let packet = Packet::default();
+    /// // Might copy data, but only once.
+    /// let data = packet.data(..);
+    ///
+    /// let foo = data[..256];
+    /// let bar = data[256..1024];
+    /// ```
     #[inline]
     pub fn data<I>(&self, index: I) -> Option<PacketFragment>
     where
@@ -282,28 +329,36 @@ impl Packet {
             None
         } else {
             match self.data {
-                PacketData::Buffer(ref buffer) => buffer
-                    .get(index.as_range())
-                    .map(|slice| PacketFragment::Borrowed(slice)),
+                PacketData::Buffer(ref buffer) => {
+                    // Case 1.
+                    buffer
+                        .get(index.as_range())
+                        .map(|slice| PacketFragment::Borrowed(slice))
+                }
                 PacketData::Chunks(ref chunks) => {
-                    let mut current_start = index.start();
-                    let mut current_end = index.end();
-                    let mut chunks = Vec::with_capacity(chunks);
-                    for chunk in chunks {
-                        if current_start < index.end() {
-                            if current_end > index.end() {
-                                return Some(PacketFragment::Borrowed(
-                                    &chunk[current_start..current_end],
-                                ));
-                            } else {
+                    if chunks.len() <= 1 {
+                        // Case 2.
+                        chunks
+                            .first()?
+                            .get(index.as_range())
+                            .map(|slice| PacketFragment::Borrowed(slice))
+                    } else {
+                        let mut current_start: usize = 0;
+                        let mut current_stop: usize = 0;
+                        for chunk in chunks {
+                            current_stop = current_stop.saturating_add(chunk.len());
+                            // Unfortunately, we can't use `Range::contains()`, it returns
+                            // `false` for the upper bound.
+                            if index.start() >= current_start && index.end() <= current_stop {
+                                // Case 3.
+                                return Some(PacketFragment::Borrowed(&chunk[index.as_range()]));
                             }
-                        } else {
                             current_start = current_start.saturating_add(chunk.len());
-                            current_end = current_end.saturating_add(chunk.len());
                         }
-                    }
 
-                    None
+                        // Case 4.
+                        None
+                    }
                 }
             }
         }
