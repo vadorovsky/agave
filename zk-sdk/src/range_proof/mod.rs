@@ -150,15 +150,15 @@ impl RangeProof {
         let A = A.compress();
 
         // generate blinding factors and generate their Pedersen vector commitment
-        let s_L: Vec<Scalar> = (0..nm).map(|_| Scalar::random(&mut OsRng)).collect();
-        let s_R: Vec<Scalar> = (0..nm).map(|_| Scalar::random(&mut OsRng)).collect();
+        let s_L = (0..nm).map(|_| Scalar::random(&mut OsRng));
+        let s_R = (0..nm).map(|_| Scalar::random(&mut OsRng));
 
         // generate blinding factor for Pedersen commitment; `s_blinding` should not to be confused
         // with blinding factors for the actual inner product vector
         let s_blinding = Scalar::random(&mut OsRng);
 
         let S = RistrettoPoint::multiscalar_mul(
-            iter::once(&s_blinding).chain(s_L.iter()).chain(s_R.iter()),
+            iter::once(&s_blinding).chain(s_L).chain(s_R),
             iter::once(&(*H)).chain(bp_gens.G(nm)).chain(bp_gens.H(nm)),
         )
         .compress();
@@ -344,13 +344,12 @@ impl RangeProof {
                 util::exp_iter(Scalar::from(2u64))
                     .take(*n_i)
                     .map(move |exp_2| exp_2 * exp_z)
-            })
-            .collect();
+            });
 
         let gs = s.iter().map(|s_i| minus_z - a * s_i);
         let hs = s_inv
             .zip(util::exp_iter(y.invert()))
-            .zip(concat_z_and_2.iter())
+            .zip(concat_z_and_2)
             .map(|((s_i_inv, exp_y_inv), z_and_2)| z + exp_y_inv * (zz * z_and_2 - b * s_i_inv));
 
         let basepoint_scalar =
