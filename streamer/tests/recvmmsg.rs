@@ -3,7 +3,7 @@
 use {
     solana_net_utils::bind_to_localhost,
     solana_streamer::{
-        packet::{Meta, Packet, PACKET_DATA_SIZE},
+        packet::{Meta, PacketMut, PACKET_DATA_SIZE},
         recvmmsg::*,
     },
     std::time::Instant,
@@ -25,7 +25,7 @@ pub fn test_recv_mmsg_batch_size() {
             let data = [0; PACKET_DATA_SIZE];
             sender.send_to(&data[..], addr).unwrap();
         }
-        let mut packets = vec![Packet::default(); TEST_BATCH_SIZE];
+        let mut packets = vec![PacketMut::default(); TEST_BATCH_SIZE];
         let now = Instant::now();
         let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
         elapsed_in_max_batch += now.elapsed().as_nanos();
@@ -41,7 +41,7 @@ pub fn test_recv_mmsg_batch_size() {
             let data = [0; PACKET_DATA_SIZE];
             sender.send_to(&data[..], addr).unwrap();
         }
-        let mut packets = vec![Packet::default(); 4];
+        let mut packets = vec![PacketMut::default(); 4];
         let mut recv = 0;
         let now = Instant::now();
         while let Ok(num) = recv_mmsg(&reader, &mut packets[..]) {

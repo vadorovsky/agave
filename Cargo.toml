@@ -460,7 +460,7 @@ solana-notifier = { path = "notifier", version = "=2.2.0" }
 solana-offchain-message = "=2.2.0"
 solana-package-metadata = "=2.2.0"
 solana-package-metadata-macro = "=2.2.0"
-solana-packet = "=2.2.0"
+solana-packet = { git = "https://github.com/vadorovsky/solana-sdk", branch = "packet-bytes" }
 solana-perf = { path = "perf", version = "=2.2.0" }
 solana-poh = { path = "poh", version = "=2.2.0" }
 solana-poh-config = "=2.2.0"

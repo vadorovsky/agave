@@ -11,13 +11,17 @@ use {
     },
 };
 pub use {
-    solana_packet::{Meta, Packet, PACKET_DATA_SIZE},
+    solana_packet::{Meta, Packet, PacketMut, PACKET_DATA_SIZE},
     solana_perf::packet::{
         to_packet_batches, PacketBatch, PacketBatchRecycler, NUM_PACKETS, PACKETS_PER_BATCH,
     },
 };
 
-pub fn recv_from(batch: &mut PacketBatch, socket: &UdpSocket, max_wait: Duration) -> Result<usize> {
+pub fn recv_from(
+    batch: &mut Vec<PacketMut>,
+    socket: &UdpSocket,
+    max_wait: Duration,
+) -> Result<usize> {
     let mut i = 0;
     //DOCUMENTED SIDE-EFFECT
     //Performance out of the IO without poll
@@ -31,7 +35,7 @@ pub fn recv_from(batch: &mut PacketBatch, socket: &UdpSocket, max_wait: Duration
     loop {
         batch.resize(
             std::cmp::min(i + NUM_RCVMMSGS, PACKETS_PER_BATCH),
-            Packet::default(),
+            PacketMut::default(),
         );
         match recv_mmsg(socket, &mut batch[i..]) {
             Err(_) if i > 0 => {
@@ -104,20 +108,29 @@ mod tests {
         let saddr = send_socket.local_addr().unwrap();
 
         let packet_batch_size = 10;
-        let mut batch = PacketBatch::with_capacity(packet_batch_size);
-        batch.resize(packet_batch_size, Packet::default());
+        let mut mut_batch = Vec::with_capacity(packet_batch_size);
+        mut_batch.resize(packet_batch_size, PacketMut::default());
 
-        for m in batch.iter_mut() {
+        for m in mut_batch.iter_mut() {
             m.meta_mut().set_socket_addr(&addr);
             m.meta_mut().size = PACKET_DATA_SIZE;
         }
+
+        let mut batch = PacketBatch::with_capacity(packet_batch_size);
+        for packet in mut_batch {
+            batch.push(packet.freeze());
+        }
+
         send_to(&batch, &send_socket, &SocketAddrSpace::Unspecified).unwrap();
 
-        batch
+        let mut mut_batch = Vec::with_capacity(packet_batch_size);
+        mut_batch.resize(packet_batch_size, PacketMut::default());
+
+        mut_batch
             .iter_mut()
             .for_each(|pkt| *pkt.meta_mut() = Meta::default());
         let recvd = recv_from(
-            &mut batch,
+            &mut mut_batch,
             &recv_socket,
             Duration::from_millis(1), // max_wait
         )
@@ -137,30 +150,13 @@ mod tests {
     }
 
     #[test]
-    fn test_packet_partial_eq() {
-        let mut p1 = Packet::default();
-        let mut p2 = Packet::default();
-
-        p1.meta_mut().size = 1;
-        p1.buffer_mut()[0] = 0;
-
-        p2.meta_mut().size = 1;
-        p2.buffer_mut()[0] = 0;
-
-        assert!(p1 == p2);
-
-        p2.buffer_mut()[0] = 4;
-        assert!(p1 != p2);
-    }
-
-    #[test]
     fn test_packet_resize() {
         solana_logger::setup();
         let recv_socket = bind_to_localhost().expect("bind");
         let addr = recv_socket.local_addr().unwrap();
         let send_socket = bind_to_localhost().expect("bind");
-        let mut batch = PacketBatch::with_capacity(PACKETS_PER_BATCH);
-        batch.resize(PACKETS_PER_BATCH, Packet::default());
+        let mut batch = Vec::with_capacity(PACKETS_PER_BATCH);
+        batch.resize(PACKETS_PER_BATCH, PacketMut::default());
 
         // Should only get PACKETS_PER_BATCH packets per iteration even
         // if a lot more were sent, and regardless of packet size

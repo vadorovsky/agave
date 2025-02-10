@@ -13,12 +13,15 @@ use {
     },
 };
 use {
-    crate::packet::{Meta, Packet},
+    crate::packet::{Meta, PacketMut},
     std::{cmp, io, net::UdpSocket},
 };
 
 #[cfg(not(target_os = "linux"))]
-pub fn recv_mmsg(socket: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
+pub fn recv_mmsg(
+    socket: &UdpSocket,
+    packets: &mut [PacketMut],
+) -> io::Result</*num packets:*/ usize> {
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
     let mut i = 0;
     let count = cmp::min(NUM_RCVMMSGS, packets.len());
@@ -79,7 +82,10 @@ fn cast_socket_addr(addr: &sockaddr_storage, hdr: &mmsghdr) -> Option<SocketAddr
 }
 
 #[cfg(target_os = "linux")]
-pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
+pub fn recv_mmsg(
+    sock: &UdpSocket,
+    packets: &mut [PacketMut],
+) -> io::Result</*num packets:*/ usize> {
     // Should never hit this, but bail if the caller didn't provide any Packets
     // to receive into
     if packets.is_empty() {
@@ -200,7 +206,7 @@ mod tests {
                 sender.send_to(&data[..], addr).unwrap();
             }
 
-            let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
+            let mut packets = vec![PacketMut::default(); TEST_NUM_MSGS];
             let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
             assert_eq!(sent, recv);
             for packet in packets.iter().take(recv) {
@@ -226,7 +232,7 @@ mod tests {
                 sender.send_to(&data[..], addr).unwrap();
             }
 
-            let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
+            let mut packets = vec![PacketMut::default(); TEST_NUM_MSGS];
             let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
             assert_eq!(TEST_NUM_MSGS, recv);
             for packet in packets.iter().take(recv) {
@@ -268,7 +274,7 @@ mod tests {
         }
 
         let start = Instant::now();
-        let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
+        let mut packets = vec![PacketMut::default(); TEST_NUM_MSGS];
         let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
         assert_eq!(TEST_NUM_MSGS, recv);
         for packet in packets.iter().take(recv) {
@@ -307,7 +313,7 @@ mod tests {
             sender2.send_to(&data[..], addr).unwrap();
         }
 
-        let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
+        let mut packets = vec![PacketMut::default(); TEST_NUM_MSGS];
 
         let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
         assert_eq!(TEST_NUM_MSGS, recv);

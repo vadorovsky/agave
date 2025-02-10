@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        packet::{Meta, Packet},
+        packet::{Meta, PacketMut},
         recvmmsg::NUM_RCVMMSGS,
     },
     std::{cmp, io},
@@ -13,7 +13,7 @@ use {
 /// returning how many packets were read
 pub async fn recv_mmsg(
     socket: &UdpSocket,
-    packets: &mut [Packet],
+    packets: &mut [PacketMut],
 ) -> io::Result</*num packets:*/ usize> {
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
     let count = cmp::min(NUM_RCVMMSGS, packets.len());
@@ -41,7 +41,7 @@ pub async fn recv_mmsg(
 /// Reads the exact number of packets required to fill `packets`
 pub async fn recv_mmsg_exact(
     socket: &UdpSocket,
-    packets: &mut [Packet],
+    packets: &mut [PacketMut],
 ) -> io::Result</*num packets:*/ usize> {
     let total = packets.len();
     let mut remaining = total;
@@ -84,7 +84,7 @@ mod tests {
             sender.send_to(&data[..], &addr).await.unwrap();
         }
 
-        let mut packets = vec![Packet::default(); sent];
+        let mut packets = vec![PacketMut::default(); sent];
         let recv = recv_mmsg_exact(&reader, &mut packets[..]).await.unwrap();
         assert_eq!(sent, recv);
         for packet in packets.iter().take(recv) {
@@ -110,7 +110,7 @@ mod tests {
             sender.send_to(&data[..], &addr).await.unwrap();
         }
 
-        let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
+        let mut packets = vec![PacketMut::default(); TEST_NUM_MSGS];
         let recv = recv_mmsg_exact(&reader, &mut packets[..]).await.unwrap();
         assert_eq!(TEST_NUM_MSGS, recv);
         for packet in packets.iter().take(recv) {
@@ -118,7 +118,7 @@ mod tests {
             assert_eq!(packet.meta().socket_addr(), saddr);
         }
 
-        let mut packets = vec![Packet::default(); sent - TEST_NUM_MSGS];
+        let mut packets = vec![PacketMut::default(); sent - TEST_NUM_MSGS];
         packets
             .iter_mut()
             .for_each(|pkt| *pkt.meta_mut() = Meta::default());
@@ -153,7 +153,7 @@ mod tests {
         }
 
         let start = Instant::now();
-        let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
+        let mut packets = vec![PacketMut::default(); TEST_NUM_MSGS];
         let recv = recv_mmsg_exact(&reader, &mut packets[..]).await.unwrap();
         assert_eq!(TEST_NUM_MSGS, recv);
         for packet in packets.iter().take(recv) {
@@ -191,7 +191,7 @@ mod tests {
             sender2.send_to(&data[..], &addr).await.unwrap();
         }
 
-        let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
+        let mut packets = vec![PacketMut::default(); TEST_NUM_MSGS];
 
         let recv = recv_mmsg(&reader, &mut packets[..]).await.unwrap();
         assert_eq!(TEST_NUM_MSGS, recv);

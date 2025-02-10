@@ -107,19 +107,15 @@ fn recv_loop(
     socket: &UdpSocket,
     exit: &AtomicBool,
     packet_batch_sender: &PacketBatchSender,
-    recycler: &PacketBatchRecycler,
+    _recycler: &PacketBatchRecycler,
     stats: &StreamerReceiveStats,
     coalesce: Duration,
-    use_pinned_memory: bool,
+    _use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> Result<()> {
     loop {
-        let mut packet_batch = if use_pinned_memory {
-            PacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
-        } else {
-            PacketBatch::with_capacity(PACKETS_PER_BATCH)
-        };
+        let mut packet_batch = Vec::with_capacity(PACKETS_PER_BATCH);
         loop {
             // Check for exit signal, even if socket is busy
             // (for instance the leader transaction socket)
@@ -153,7 +149,12 @@ fn recv_loop(
                     packet_batch
                         .iter_mut()
                         .for_each(|p| p.meta_mut().set_from_staked_node(is_staked_service));
-                    packet_batch_sender.send(packet_batch)?;
+
+                    let mut immut_packet_batch = PacketBatch::with_capacity(packet_batch.len());
+                    for packet in packet_batch {
+                        immut_packet_batch.push(packet.freeze());
+                    }
+                    packet_batch_sender.send(immut_packet_batch)?;
                 }
                 break;
             }
@@ -441,7 +442,7 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{Packet, PacketBatch, PACKET_DATA_SIZE},
+            packet::{Packet, PacketBatch, PacketMut, PACKET_DATA_SIZE},
             streamer::{receiver, responder},
         },
         crossbeam_channel::unbounded,
@@ -512,13 +513,13 @@ mod test {
             );
             let mut packet_batch = PacketBatch::default();
             for i in 0..NUM_PACKETS {
-                let mut p = Packet::default();
+                let mut p = PacketMut::default();
                 {
                     p.buffer_mut()[0] = i as u8;
                     p.meta_mut().size = PACKET_DATA_SIZE;
                     p.meta_mut().set_socket_addr(&addr);
                 }
-                packet_batch.push(p);
+                packet_batch.push(p.freeze());
             }
             s_responder.send(packet_batch).expect("send");
             t_responder
