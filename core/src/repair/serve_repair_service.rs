@@ -3,7 +3,10 @@ use {
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, Sender},
     solana_ledger::blockstore::Blockstore,
-    solana_perf::{packet::PacketBatch, recycler::Recycler},
+    solana_perf::{
+        packet::{Packet, PacketRead},
+        recycler::Recycler,
+    },
     solana_streamer::{
         socket::SocketAddrSpace,
         streamer::{self, StreamerReceiveStats},
@@ -83,18 +86,18 @@ impl ServeRepairService {
 
 // Adapts incoming UDP repair requests into RemoteRequest struct.
 pub(crate) fn adapt_repair_requests_packets(
-    packets_receiver: Receiver<PacketBatch>,
+    packets_receiver: Receiver<Vec<Packet>>,
     remote_request_sender: Sender<RemoteRequest>,
 ) {
     for packets in packets_receiver {
         for packet in &packets {
-            let Some(bytes) = packet.data(..).map(Vec::from) else {
+            let Some(bytes) = packet.slice(..) else {
                 continue;
             };
             let request = RemoteRequest {
                 remote_pubkey: None,
                 remote_address: packet.meta().socket_addr(),
-                bytes: Bytes::from(bytes),
+                bytes,
             };
             if remote_request_sender.send(request).is_err() {
                 return; // The receiver end of the channel is disconnected.

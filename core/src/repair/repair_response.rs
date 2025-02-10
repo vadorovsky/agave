@@ -1,10 +1,12 @@
 use {
+    bytes::{BufMut, Bytes, BytesMut},
     solana_ledger::{
         blockstore::Blockstore,
         shred::{Nonce, SIZE_OF_NONCE},
     },
-    solana_sdk::{clock::Slot, packet::Packet},
-    std::{io, net::SocketAddr},
+    solana_perf::packet::{Meta, Packet},
+    solana_sdk::clock::Slot,
+    std::net::SocketAddr,
 };
 
 pub fn repair_response_packet(
@@ -23,21 +25,18 @@ pub fn repair_response_packet(
 }
 
 pub fn repair_response_packet_from_bytes(
-    bytes: impl AsRef<[u8]>,
+    bytes: Vec<u8>,
     dest: &SocketAddr,
     nonce: Nonce,
 ) -> Option<Packet> {
-    let bytes = bytes.as_ref();
-    let mut packet = Packet::default();
-    let size = bytes.len() + SIZE_OF_NONCE;
-    if size > packet.buffer_mut().len() {
-        return None;
-    }
-    packet.meta_mut().size = size;
-    packet.meta_mut().set_socket_addr(dest);
-    packet.buffer_mut()[..bytes.len()].copy_from_slice(bytes);
-    let mut wr = io::Cursor::new(&mut packet.buffer_mut()[bytes.len()..]);
+    let mut meta = Meta::default();
+    meta.set_socket_addr(dest);
+    let mut buffer = BytesMut::from(Bytes::from(bytes.into_boxed_slice()));
+    buffer.reserve(SIZE_OF_NONCE);
+    let mut wr = buffer.writer();
     bincode::serialize_into(&mut wr, &nonce).expect("Buffer not large enough to fit nonce");
+    let buffer = wr.into_inner().freeze();
+    let packet = Packet::new(buffer, meta);
     Some(packet)
 }
 
@@ -46,13 +45,11 @@ mod test {
     use {
         super::*,
         solana_ledger::{
-            shred::{Shred, ShredFlags},
+            shred::{Payload, Shred, ShredFlags},
             sigverify_shreds::{verify_shred_cpu, LruCache},
         },
-        solana_sdk::{
-            packet::PacketFlags,
-            signature::{Keypair, Signer},
-        },
+        solana_perf::packet::PacketFlags,
+        solana_sdk::signature::{Keypair, Signer},
         std::{
             collections::HashMap,
             net::{IpAddr, Ipv4Addr},
@@ -79,7 +76,7 @@ mod test {
         trace!("signature {}", shred.signature());
         let nonce = 9;
         let mut packet = repair_response_packet_from_bytes(
-            shred.into_payload(),
+            Payload::unwrap_or_clone(shred.into_payload()),
             &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080),
             nonce,
         )
