@@ -13,6 +13,7 @@ chrono = { workspace = true }
 clap = { workspace = true }
 crossbeam-channel = { workspace = true }
 csv = { workspace = true }
+jemallocator = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }

@@ -10,6 +10,7 @@ edition = { workspace = true }
 
 [dependencies]
 clap = { workspace = true }
+jemallocator = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
