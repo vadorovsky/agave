@@ -3,7 +3,7 @@
 
 use {
     crate::{
-        packet::{self, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
+        packet::{self, PacketBatch, PacketBatchRecycler, TpuPacket, PACKETS_PER_BATCH},
         sendmmsg::{batch_send, SendPktsError},
         socket::SocketAddrSpace,
     },
@@ -39,6 +39,9 @@ pub struct StakedNodes {
 
 pub type PacketBatchReceiver = Receiver<PacketBatch>;
 pub type PacketBatchSender = Sender<PacketBatch>;
+
+pub type TpuPacketBatchReceiver = Receiver<Vec<TpuPacket>>;
+pub type TpuPacketBatchSender = Sender<Vec<TpuPacket>>;
 
 #[derive(Error, Debug)]
 pub enum StreamerError {

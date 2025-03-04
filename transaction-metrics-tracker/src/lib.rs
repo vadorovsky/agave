@@ -1,6 +1,9 @@
 use {
-    lazy_static::lazy_static, log::*, rand::Rng, solana_packet::Packet,
-    solana_perf::sigverify::PacketError, solana_short_vec::decode_shortu16_len,
+    lazy_static::lazy_static,
+    log::*,
+    rand::Rng,
+    solana_perf::{packet::PacketRead, sigverify::PacketError},
+    solana_short_vec::decode_shortu16_len,
     solana_signature::SIGNATURE_BYTES,
 };
 
@@ -22,9 +25,12 @@ pub fn should_track_transaction(signature: &[u8; SIGNATURE_BYTES]) -> bool {
 /// Check if a transaction packet's signature matches the mask.
 /// This does a rudimentry verification to make sure the packet at least
 /// contains the signature data and it returns the reference to the signature.
-pub fn signature_if_should_track_packet(
-    packet: &Packet,
-) -> Result<Option<&[u8; SIGNATURE_BYTES]>, PacketError> {
+pub fn signature_if_should_track_packet<P>(
+    packet: &P,
+) -> Result<Option<&[u8; SIGNATURE_BYTES]>, PacketError>
+where
+    P: PacketRead,
+{
     let signature = get_signature_from_packet(packet)?;
     Ok(should_track_transaction(signature).then_some(signature))
 }
@@ -32,7 +38,10 @@ pub fn signature_if_should_track_packet(
 /// Get the signature of the transaction packet
 /// This does a rudimentry verification to make sure the packet at least
 /// contains the signature data and it returns the reference to the signature.
-pub fn get_signature_from_packet(packet: &Packet) -> Result<&[u8; SIGNATURE_BYTES], PacketError> {
+pub fn get_signature_from_packet<P>(packet: &P) -> Result<&[u8; SIGNATURE_BYTES], PacketError>
+where
+    P: PacketRead,
+{
     let (sig_len_untrusted, sig_start) = packet
         .data(..)
         .and_then(|bytes| decode_shortu16_len(bytes).ok())

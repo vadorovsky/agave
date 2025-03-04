@@ -13,7 +13,8 @@ use {
 pub use {
     solana_packet::{Meta, Packet, PACKET_DATA_SIZE},
     solana_perf::packet::{
-        to_packet_batches, PacketBatch, PacketBatchRecycler, NUM_PACKETS, PACKETS_PER_BATCH,
+        to_packet_batches, PacketBatch, PacketBatchRecycler, TpuPacket, NUM_PACKETS,
+        PACKETS_PER_BATCH,
     },
 };
 

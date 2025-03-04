@@ -14,10 +14,9 @@ use {
     solana_measure::measure::Measure,
     solana_merkle_tree::MerkleTree,
     solana_metrics::*,
-    solana_packet::Meta,
     solana_perf::{
         cuda_runtime::PinnedVec,
-        packet::{Packet, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
+        packet::{PacketBatchRecycler, PacketRead, TpuPacket, TpuPacketBatch, PACKETS_PER_BATCH},
         perf_libs,
         recycler::Recycler,
         sigverify,
@@ -522,35 +521,16 @@ fn start_verify_transactions_gpu<Tx: TransactionWithMeta + Send + Sync + 'static
             .par_chunks(PACKETS_PER_BATCH)
             .map(|transaction_chunk| {
                 let num_transactions = transaction_chunk.len();
-                let mut packet_batch = PacketBatch::new_with_recycler(
-                    &verify_recyclers.packet_recycler,
-                    num_transactions,
-                    "entry-sig-verify",
-                );
-                // We use set_len here instead of resize(num_txs, Packet::default()), to save
-                // memory bandwidth and avoid writing a large amount of data that will be overwritten
-                // soon afterwards. As well, Packet::default() actually leaves the packet data
-                // uninitialized, so the initialization would simply write junk into
-                // the vector anyway.
-                unsafe {
-                    packet_batch.set_len(num_transactions);
-                }
                 let transaction_iter = transaction_chunk
                     .iter()
                     .map(|tx| tx.to_versioned_transaction());
-
-                let res = packet_batch
-                    .iter_mut()
-                    .zip(transaction_iter)
-                    .all(|(packet, tx)| {
-                        *packet.meta_mut() = Meta::default();
-                        Packet::populate_packet(packet, None, &tx).is_ok()
-                    });
-                if res {
-                    Ok(packet_batch)
-                } else {
-                    Err(TransactionError::SanitizeFailure)
+                let mut packet_batch = TpuPacketBatch::with_capacity(num_transactions);
+                for tx in transaction_iter {
+                    let packet = TpuPacket::from_data(None, tx)
+                        .map_err(|_| TransactionError::SanitizeFailure)?;
+                    packet_batch.push(packet);
                 }
+                Ok(packet_batch)
             })
             .collect::<Result<Vec<_>>>()
     });

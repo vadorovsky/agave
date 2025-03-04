@@ -2,11 +2,13 @@
 
 use {
     clap::{crate_description, crate_name, Arg, Command},
-    crossbeam_channel::unbounded,
+    crossbeam_channel::{unbounded, Receiver},
     solana_net_utils::{bind_to_unspecified, SocketConfig},
     solana_streamer::{
-        packet::{Packet, PacketBatch, PacketBatchRecycler, PACKET_DATA_SIZE},
-        streamer::{receiver, PacketBatchReceiver, StreamerReceiveStats},
+        packet::{
+            Packet, PacketBatch, PacketBatchRecycler, PacketRead, TpuPacket, PACKET_DATA_SIZE,
+        },
+        streamer::{receiver, StreamerReceiveStats},
     },
     std::{
         cmp::max,
@@ -46,14 +48,14 @@ fn producer(addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<()> {
     })
 }
 
-fn sink(exit: Arc<AtomicBool>, rvs: Arc<AtomicUsize>, r: PacketBatchReceiver) -> JoinHandle<()> {
+fn sink(exit: Arc<AtomicBool>, rvs: Arc<AtomicUsize>, r: Receiver<TpuPacket>) -> JoinHandle<()> {
     spawn(move || loop {
         if exit.load(Ordering::Relaxed) {
             return;
         }
         let timer = Duration::new(1, 0);
         if let Ok(packet_batch) = r.recv_timeout(timer) {
-            rvs.fetch_add(packet_batch.len(), Ordering::Relaxed);
+            rvs.fetch_add(packet_batch.size(), Ordering::Relaxed);
         }
     })
 }
@@ -114,10 +116,8 @@ fn main() -> Result<()> {
             Arc::new(read),
             exit.clone(),
             s_reader,
-            recycler.clone(),
             stats.clone(),
             Duration::from_millis(1), // coalesce
-            true,
             None,
             false,
         ));

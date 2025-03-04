@@ -14,7 +14,7 @@ use {
     rayon::prelude::*,
     serde::{Deserialize, Serialize},
     std::{
-        ops::{Index, IndexMut},
+        ops::{Deref, DerefMut, Index, IndexMut},
         os::raw::c_int,
         slice::{Iter, IterMut, SliceIndex},
         sync::Weak,
@@ -331,6 +331,20 @@ impl<T: Sized + Default + Clone> Drop for PinnedVec<T> {
         } else if self.pinned {
             unpin(self.x.as_mut_ptr());
         }
+    }
+}
+
+impl<T: Sized + Default + Clone> Deref for PinnedVec<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.x
+    }
+}
+
+impl<T: Sized + Default + Clone> DerefMut for PinnedVec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.x
     }
 }
 

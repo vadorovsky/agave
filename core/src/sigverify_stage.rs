@@ -13,7 +13,7 @@ use {
     solana_measure::measure::Measure,
     solana_perf::{
         deduper::{self, Deduper},
-        packet::PacketBatch,
+        packet::{GenericPacketBatch, PacketBatch, PacketRead, TpuPacket, TpuPacketBatch},
         sigverify::{
             count_discarded_packets, count_packets_in_batches, count_valid_packets, shrink_batches,
         },
@@ -56,8 +56,14 @@ pub struct SigVerifyStage {
 
 pub trait SigVerifier {
     type SendType: std::fmt::Debug;
-    fn verify_batches(&self, batches: Vec<PacketBatch>, valid_packets: usize) -> Vec<PacketBatch>;
-    fn send_packets(&mut self, packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType>;
+    fn verify_batches<B, P>(&self, batches: Vec<B>, valid_packets: usize) -> Vec<B>
+    where
+        B: GenericPacketBatch<P>,
+        P: PacketRead;
+    fn send_packets<B, P>(&mut self, packet_batches: Vec<B>) -> Result<(), Self::SendType>
+    where
+        B: GenericPacketBatch<P>,
+        P: PacketRead;
 }
 
 #[derive(Default, Clone)]
@@ -218,9 +224,9 @@ impl SigVerifier for DisabledSigVerifier {
     type SendType = ();
     fn verify_batches(
         &self,
-        mut batches: Vec<PacketBatch>,
+        mut batches: Vec<TpuPacketBatch>,
         _valid_packets: usize,
-    ) -> Vec<PacketBatch> {
+    ) -> Vec<TpuPacketBatch> {
         sigverify::ed25519_verify_disabled(&mut batches);
         batches
     }
@@ -232,7 +238,7 @@ impl SigVerifier for DisabledSigVerifier {
 
 impl SigVerifyStage {
     pub fn new<T: SigVerifier + 'static + Send>(
-        packet_receiver: Receiver<PacketBatch>,
+        packet_receiver: Receiver<Vec<TpuPacket>>,
         verifier: T,
         thread_name: &'static str,
         metrics_name: &'static str,
@@ -285,7 +291,7 @@ impl SigVerifyStage {
 
     fn verifier<const K: usize, T: SigVerifier>(
         deduper: &Deduper<K, [u8]>,
-        recvr: &Receiver<PacketBatch>,
+        recvr: &Receiver<Vec<TpuPacket>>,
         verifier: &mut T,
         stats: &mut SigVerifierStats,
     ) -> Result<(), T::SendType> {
@@ -379,7 +385,7 @@ impl SigVerifyStage {
     }
 
     fn verifier_service<T: SigVerifier + 'static + Send>(
-        packet_receiver: Receiver<PacketBatch>,
+        packet_receiver: Receiver<Vec<TpuPacket>>,
         mut verifier: T,
         thread_name: &'static str,
         metrics_name: &'static str,
