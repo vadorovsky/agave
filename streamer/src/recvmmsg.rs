@@ -13,7 +13,7 @@ use {
     },
 };
 use {
-    crate::packet::{Meta, Packet},
+    crate::packet::TpuPacketMut,
     std::{cmp, io, net::UdpSocket},
 };
 
@@ -79,14 +79,19 @@ fn cast_socket_addr(addr: &sockaddr_storage, hdr: &mmsghdr) -> Option<SocketAddr
 }
 
 #[cfg(target_os = "linux")]
-pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
+pub fn recv_mmsg(
+    sock: &UdpSocket,
+    packets: &mut [TpuPacketMut],
+) -> io::Result</*num packets:*/ usize> {
     // Should never hit this, but bail if the caller didn't provide any Packets
     // to receive into
+
+    use bytes::BufMut;
     if packets.is_empty() {
         return Ok(0);
     }
     // Assert that there are no leftovers in packets.
-    debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
+    debug_assert!(packets.iter().all(|pkt| pkt == &TpuPacketMut::default()));
     const SOCKADDR_STORAGE_SIZE: socklen_t = mem::size_of::<sockaddr_storage>() as socklen_t;
 
     let mut iovs = [MaybeUninit::uninit(); NUM_RCVMMSGS];
@@ -142,7 +147,11 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
         // SAFETY: Similar to above, we initialized this `addr` and recvmmsg()
         // will have populated it
         let addr_ref = unsafe { addr.assume_init_ref() };
-        pkt.meta_mut().size = hdr_ref.msg_len as usize;
+        // SAFETY: We are sure that `recvmmsg` filled the buffer with `msg_len`
+        // bytes.
+        unsafe {
+            pkt.buffer_mut().advance_mut(hdr_ref.msg_len as usize);
+        }
         if let Some(addr) = cast_socket_addr(addr_ref, hdr_ref) {
             pkt.meta_mut().set_socket_addr(&addr);
         }

@@ -8534,6 +8534,7 @@ dependencies = [
  "assert_matches",
  "bincode",
  "bv",
+ "bytes",
  "caps",
  "curve25519-dalek 4.1.3",
  "dlopen2",

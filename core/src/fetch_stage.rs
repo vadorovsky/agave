@@ -2,9 +2,12 @@
 
 use {
     crate::result::{Error, Result},
-    crossbeam_channel::{unbounded, RecvTimeoutError},
+    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     solana_metrics::{inc_new_counter_debug, inc_new_counter_info},
-    solana_perf::{packet::PacketBatchRecycler, recycler::Recycler},
+    solana_perf::{
+        packet::{PacketBatchRecycler, TpuPacket},
+        recycler::Recycler,
+    },
     solana_poh::poh_recorder::PohRecorder,
     solana_sdk::{
         clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
@@ -37,7 +40,7 @@ impl FetchStage {
         exit: Arc<AtomicBool>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Duration,
-    ) -> (Self, PacketBatchReceiver, PacketBatchReceiver) {
+    ) -> (Self, Receiver<Vec<TpuPacket>>, Receiver<Vec<TpuPacket>>) {
         let (sender, receiver) = unbounded();
         let (vote_sender, vote_receiver) = unbounded();
         let (forward_sender, forward_receiver) = unbounded();
@@ -67,10 +70,10 @@ impl FetchStage {
         tpu_forwards_sockets: Vec<UdpSocket>,
         tpu_vote_sockets: Vec<UdpSocket>,
         exit: Arc<AtomicBool>,
-        sender: &PacketBatchSender,
-        vote_sender: &PacketBatchSender,
-        forward_sender: &PacketBatchSender,
-        forward_receiver: PacketBatchReceiver,
+        sender: &Sender<Vec<TpuPacket>>,
+        vote_sender: &Sender<Vec<TpuPacket>>,
+        forward_sender: &Sender<Vec<TpuPacket>>,
+        forward_receiver: Receiver<Vec<TpuPacket>>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Duration,
         in_vote_only_mode: Option<Arc<AtomicBool>>,
@@ -143,10 +146,10 @@ impl FetchStage {
         tpu_forwards_sockets: Vec<Arc<UdpSocket>>,
         tpu_vote_sockets: Vec<Arc<UdpSocket>>,
         exit: Arc<AtomicBool>,
-        sender: &PacketBatchSender,
-        vote_sender: &PacketBatchSender,
-        forward_sender: &PacketBatchSender,
-        forward_receiver: PacketBatchReceiver,
+        sender: &Sender<Vec<TpuPacket>>,
+        vote_sender: &Sender<Vec<TpuPacket>>,
+        forward_sender: &Sender<Vec<TpuPacket>>,
+        forward_receiver: Receiver<Vec<TpuPacket>>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Duration,
         in_vote_only_mode: Option<Arc<AtomicBool>>,

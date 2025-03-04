@@ -11,6 +11,7 @@ use {
     histogram::Histogram,
     itertools::Itertools,
     solana_packet::Packet,
+    solana_perf::packet::{TpuPacket, TpuPacketMut},
     solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
     std::{
@@ -113,20 +114,14 @@ pub type Result<T> = std::result::Result<T, StreamerError>;
 fn recv_loop(
     socket: &UdpSocket,
     exit: &AtomicBool,
-    packet_batch_sender: &PacketBatchSender,
-    recycler: &PacketBatchRecycler,
+    packet_batch_sender: &Sender<Vec<TpuPacket>>,
     stats: &StreamerReceiveStats,
     coalesce: Duration,
-    use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> Result<()> {
     loop {
-        let mut packet_batch = if use_pinned_memory {
-            PacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
-        } else {
-            PacketBatch::with_capacity(PACKETS_PER_BATCH)
-        };
+        let mut packet_batch: Vec<TpuPacketMut> = Vec::with_capacity(PACKETS_PER_BATCH);
         loop {
             // Check for exit signal, even if socket is busy
             // (for instance the leader transaction socket)
@@ -160,6 +155,8 @@ fn recv_loop(
                     packet_batch
                         .iter_mut()
                         .for_each(|p| p.meta_mut().set_from_staked_node(is_staked_service));
+                    let packet_batch: Vec<_> =
+                        packet_batch.into_iter().map(|p| p.freeze()).collect();
                     if let Err(TrySendError::Full(_)) = packet_batch_sender.try_send(packet_batch) {
                         stats.num_packets_dropped.fetch_add(len, Ordering::Relaxed);
                     }
@@ -175,11 +172,9 @@ pub fn receiver(
     thread_name: String,
     socket: Arc<UdpSocket>,
     exit: Arc<AtomicBool>,
-    packet_batch_sender: PacketBatchSender,
-    recycler: PacketBatchRecycler,
+    packet_batch_sender: Sender<Vec<TpuPacket>>,
     stats: Arc<StreamerReceiveStats>,
     coalesce: Duration,
-    use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> JoinHandle<()> {
@@ -192,10 +187,8 @@ pub fn receiver(
                 &socket,
                 &exit,
                 &packet_batch_sender,
-                &recycler,
                 &stats,
                 coalesce,
-                use_pinned_memory,
                 in_vote_only_mode,
                 is_staked_service,
             );
@@ -376,8 +369,8 @@ fn recv_send(
 }
 
 pub fn recv_packet_batches(
-    recvr: &PacketBatchReceiver,
-) -> Result<(Vec<PacketBatch>, usize, Duration)> {
+    recvr: &Receiver<Vec<TpuPacket>>,
+) -> Result<(Vec<Vec<TpuPacket>>, usize, Duration)> {
     let recv_start = Instant::now();
     let timer = Duration::new(1, 0);
     let packet_batch = recvr.recv_timeout(timer)?;

@@ -13,7 +13,7 @@ use {
     solana_measure::measure::Measure,
     solana_perf::{
         deduper::{self, Deduper},
-        packet::PacketBatch,
+        packet::{PacketBatch, TpuPacket},
         sigverify::{
             count_discarded_packets, count_packets_in_batches, count_valid_packets, shrink_batches,
         },
@@ -232,7 +232,7 @@ impl SigVerifier for DisabledSigVerifier {
 
 impl SigVerifyStage {
     pub fn new<T: SigVerifier + 'static + Send>(
-        packet_receiver: Receiver<PacketBatch>,
+        packet_receiver: Receiver<Vec<TpuPacket>>,
         verifier: T,
         thread_name: &'static str,
         metrics_name: &'static str,
@@ -285,7 +285,7 @@ impl SigVerifyStage {
 
     fn verifier<const K: usize, T: SigVerifier>(
         deduper: &Deduper<K, [u8]>,
-        recvr: &Receiver<PacketBatch>,
+        recvr: &Receiver<Vec<TpuPacket>>,
         verifier: &mut T,
         stats: &mut SigVerifierStats,
     ) -> Result<(), T::SendType> {
@@ -379,7 +379,7 @@ impl SigVerifyStage {
     }
 
     fn verifier_service<T: SigVerifier + 'static + Send>(
-        packet_receiver: Receiver<PacketBatch>,
+        packet_receiver: Receiver<Vec<TpuPacket>>,
         mut verifier: T,
         thread_name: &'static str,
         metrics_name: &'static str,
