@@ -13,7 +13,7 @@ use {
     solana_measure::measure::Measure,
     solana_perf::{
         deduper::{self, Deduper},
-        packet::PacketBatch,
+        packet::{GenericPacketBatch, PacketBatch, PacketRead, TpuPacket, TpuPacketBatch},
         sigverify::{
             count_discarded_packets, count_packets_in_batches, count_valid_packets, shrink_batches,
         },
@@ -56,8 +56,17 @@ pub struct SigVerifyStage {
 
 pub trait SigVerifier {
     type SendType: std::fmt::Debug;
-    fn verify_batches(&self, batches: Vec<PacketBatch>, valid_packets: usize) -> Vec<PacketBatch>;
-    fn send_packets(&mut self, packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType>;
+    type Packet: PacketRead;
+    type PacketBatch: GenericPacketBatch<Self::Packet>;
+    fn verify_batches(
+        &self,
+        batches: Vec<Self::PacketBatch>,
+        valid_packets: usize,
+    ) -> Vec<Self::PacketBatch>;
+    fn send_packets(
+        &mut self,
+        packet_batches: Vec<Self::PacketBatch>,
+    ) -> Result<(), Self::SendType>;
 }
 
 #[derive(Default, Clone)]
@@ -216,23 +225,28 @@ impl SigVerifierStats {
 
 impl SigVerifier for DisabledSigVerifier {
     type SendType = ();
+    type Packet = TpuPacket;
+    type PacketBatch = TpuPacketBatch;
     fn verify_batches(
         &self,
-        mut batches: Vec<PacketBatch>,
+        mut batches: Vec<Self::PacketBatch>,
         _valid_packets: usize,
-    ) -> Vec<PacketBatch> {
+    ) -> Vec<Self::PacketBatch> {
         sigverify::ed25519_verify_disabled(&mut batches);
         batches
     }
 
-    fn send_packets(&mut self, _packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType> {
+    fn send_packets(
+        &mut self,
+        _packet_batches: Vec<Self::PacketBatch>,
+    ) -> Result<(), Self::SendType> {
         Ok(())
     }
 }
 
 impl SigVerifyStage {
     pub fn new<T: SigVerifier + 'static + Send>(
-        packet_receiver: Receiver<PacketBatch>,
+        packet_receiver: Receiver<Vec<TpuPacket>>,
         verifier: T,
         thread_name: &'static str,
         metrics_name: &'static str,
@@ -242,7 +256,7 @@ impl SigVerifyStage {
         Self { thread_hdl }
     }
 
-    pub fn discard_excess_packets(batches: &mut [PacketBatch], mut max_packets: usize) {
+    pub fn discard_excess_packets(batches: &mut [TpuPacketBatch], mut max_packets: usize) {
         // Group packets by their incoming IP address.
         let mut addrs = batches
             .iter_mut()
@@ -268,7 +282,7 @@ impl SigVerifyStage {
     }
 
     /// make this function public so that it is available for benchmarking
-    pub fn maybe_shrink_batches(packet_batches: &mut Vec<PacketBatch>) -> (u64, usize) {
+    pub fn maybe_shrink_batches(packet_batches: &mut Vec<TpuPacketBatch>) -> (u64, usize) {
         let mut shrink_time = Measure::start("sigverify_shrink_time");
         let num_packets = count_packets_in_batches(packet_batches);
         let num_discarded_packets = count_discarded_packets(packet_batches);
@@ -285,7 +299,7 @@ impl SigVerifyStage {
 
     fn verifier<const K: usize, T: SigVerifier>(
         deduper: &Deduper<K, [u8]>,
-        recvr: &Receiver<PacketBatch>,
+        recvr: &Receiver<TpuPacketBatch>,
         verifier: &mut T,
         stats: &mut SigVerifierStats,
     ) -> Result<(), T::SendType> {
@@ -379,7 +393,7 @@ impl SigVerifyStage {
     }
 
     fn verifier_service<T: SigVerifier + 'static + Send>(
-        packet_receiver: Receiver<PacketBatch>,
+        packet_receiver: Receiver<TpuPacketBatch>,
         mut verifier: T,
         thread_name: &'static str,
         metrics_name: &'static str,

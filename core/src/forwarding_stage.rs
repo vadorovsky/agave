@@ -6,7 +6,7 @@ use {
         banking_stage::LikeClusterInfo,
         next_leader::{next_leader, next_leader_tpu_vote},
     },
-    agave_banking_stage_ingress_types::BankingPacketBatch,
+    agave_banking_stage_ingress_types::{BankingPacketBatch, TpuBankingPacketBatch},
     agave_transaction_view::transaction_view::SanitizedTransactionView,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     packet_container::PacketContainer,
@@ -15,7 +15,10 @@ use {
     solana_cost_model::cost_model::CostModel,
     solana_gossip::contact_info::Protocol,
     solana_net_utils::bind_to_unspecified,
-    solana_perf::data_budget::DataBudget,
+    solana_perf::{
+        data_budget::DataBudget,
+        packet::{GenericPacketBatch, PacketRead},
+    },
     solana_poh::poh_recorder::PohRecorder,
     solana_runtime::{bank::Bank, root_bank_cache::RootBankCache},
     solana_runtime_transaction::{
@@ -80,7 +83,8 @@ impl VoteClient {
 
 /// Forwards packets to current/next leader.
 pub struct ForwardingStage<F: ForwardAddressGetter> {
-    receiver: Receiver<(BankingPacketBatch, bool)>,
+    fetch_receiver: Receiver<(BankingPacketBatch, bool)>,
+    receiver: Receiver<(TpuBankingPacketBatch, bool)>,
     packet_container: PacketContainer,
 
     root_bank_cache: RootBankCache,
@@ -94,13 +98,15 @@ pub struct ForwardingStage<F: ForwardAddressGetter> {
 
 impl<F: ForwardAddressGetter> ForwardingStage<F> {
     pub fn spawn(
-        receiver: Receiver<(BankingPacketBatch, bool)>,
+        fetch_receiver: Receiver<(BankingPacketBatch, bool)>,
+        receiver: Receiver<(TpuBankingPacketBatch, bool)>,
         connection_cache: Arc<ConnectionCache>,
         root_bank_cache: RootBankCache,
         forward_address_getter: F,
         data_budget: DataBudget,
     ) -> JoinHandle<()> {
         let forwarding_stage = Self::new(
+            fetch_receiver,
             receiver,
             connection_cache,
             root_bank_cache,
@@ -114,13 +120,15 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
     }
 
     fn new(
-        receiver: Receiver<(BankingPacketBatch, bool)>,
+        fetch_receiver: Receiver<(BankingPacketBatch, bool)>,
+        receiver: Receiver<(TpuBankingPacketBatch, bool)>,
         connection_cache: Arc<ConnectionCache>,
         root_bank_cache: RootBankCache,
         forward_address_getter: F,
         data_budget: DataBudget,
     ) -> Self {
         Self {
+            fetch_receiver,
             receiver,
             packet_container: PacketContainer::with_capacity(4 * 4096),
             root_bank_cache,
@@ -187,12 +195,15 @@ impl<F: ForwardAddressGetter> ForwardingStage<F> {
     }
 
     /// Insert received packets into the packet container.
-    fn buffer_packet_batches(
+    fn buffer_packet_batches<B, P>(
         &mut self,
-        packet_batches: BankingPacketBatch,
+        packet_batches: Arc<Vec<B>>,
         is_tpu_vote_batch: bool,
         bank: &Bank,
-    ) {
+    ) where
+        B: GenericPacketBatch<P>,
+        P: PacketRead,
+    {
         for batch in packet_batches.iter() {
             for packet in batch
                 .iter()

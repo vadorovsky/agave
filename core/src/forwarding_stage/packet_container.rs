@@ -1,11 +1,11 @@
-use {min_max_heap::MinMaxHeap, slab::Slab, solana_perf::packet::Packet};
+use {min_max_heap::MinMaxHeap, slab::Slab, solana_perf::packet::PacketType};
 
 /// Container for storing packets.
 /// Packet IDs are stored with priority in a priority queue and the actual
 /// `Packet` are stored in a map.
 pub struct PacketContainer {
     priority_queue: MinMaxHeap<PriorityIndex>,
-    packets: Slab<Packet>,
+    packets: Slab<PacketType>,
 }
 
 impl PacketContainer {
@@ -28,19 +28,19 @@ impl PacketContainer {
         self.priority_queue.peek_min().map(|min| min.priority)
     }
 
-    pub fn pop_and_remove_max(&mut self) -> Option<Packet> {
+    pub fn pop_and_remove_max(&mut self) -> Option<PacketType> {
         self.priority_queue
             .pop_max()
             .map(|max| self.packets.remove(max.index))
     }
 
-    pub fn pop_and_remove_min(&mut self) -> Option<Packet> {
+    pub fn pop_and_remove_min(&mut self) -> Option<PacketType> {
         self.priority_queue
             .pop_min()
             .map(|min| self.packets.remove(min.index))
     }
 
-    pub fn insert(&mut self, packet: Packet, priority: u64) {
+    pub fn insert(&mut self, packet: PacketType, priority: u64) {
         let entry = self.packets.vacant_entry();
         let index = entry.key();
         entry.insert(packet.clone());

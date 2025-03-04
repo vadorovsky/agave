@@ -3,13 +3,14 @@ pub use solana_packet::{self, Meta, Packet, PacketFlags, PACKET_DATA_SIZE};
 use {
     crate::{cuda_runtime::PinnedVec, recycler::Recycler},
     bincode::config::Options,
+    bytes::{BufMut, Bytes, BytesMut},
     rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     std::{
         borrow::Borrow,
         io::Read,
         net::SocketAddr,
-        ops::{Index, IndexMut},
+        ops::{Deref, DerefMut, Index, IndexMut},
         slice::{Iter, IterMut, SliceIndex},
     },
 };
@@ -18,6 +19,233 @@ pub const NUM_PACKETS: usize = 1024 * 8;
 
 pub const PACKETS_PER_BATCH: usize = 64;
 pub const NUM_RCVMMSGS: usize = 64;
+
+/// Read data and metadata from a packet.
+pub trait PacketRead {
+    fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>;
+    fn meta(&self) -> &Meta;
+    fn meta_mut(&mut self) -> &mut Meta;
+    fn size(&self) -> usize;
+
+    fn deserialize_slice<T, I>(&self, index: I) -> bincode::Result<T>
+    where
+        T: serde::de::DeserializeOwned,
+        I: SliceIndex<[u8], Output = [u8]>,
+    {
+        let bytes = self.data(index).ok_or(bincode::ErrorKind::SizeLimit)?;
+        bincode::options()
+            .with_limit(PACKET_DATA_SIZE as u64)
+            .with_fixint_encoding()
+            .reject_trailing_bytes()
+            .deserialize(bytes)
+    }
+}
+
+impl PacketRead for Packet {
+    fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>,
+    {
+        self.data(index)
+    }
+
+    #[inline]
+    fn meta(&self) -> &Meta {
+        self.meta()
+    }
+
+    #[inline]
+    fn meta_mut(&mut self) -> &mut Meta {
+        self.meta_mut()
+    }
+
+    fn size(&self) -> usize {
+        self.meta().size
+    }
+}
+
+/// Creates a [`BytesMut`] buffer and [`Meta`] from the given serializable
+/// `data`.
+fn from_data<T>(dest: Option<&SocketAddr>, data: T) -> bincode::Result<(BytesMut, Meta)>
+where
+    T: solana_packet::Encode,
+{
+    let buffer = BytesMut::with_capacity(PACKET_DATA_SIZE);
+    let mut writer = buffer.writer();
+    data.encode(&mut writer)?;
+    let buffer = writer.into_inner();
+    let mut meta = Meta::default();
+
+    // We don't use the `size` field of `Meta` in `TpuPacket`/`TpuPacketMut`.
+    // Instead, we rely on the length of the buffers. There is no need for
+    // tracking the size manually.
+    // However, removing the `size` field from `Meta` would break ABI and the
+    // `Packet` struct. Maintaining multiple `Meta` implementations would add
+    // more maintenance burden.
+    meta.size = usize::MAX;
+
+    if let Some(dest) = dest {
+        meta.set_socket_addr(dest);
+    }
+    Ok((buffer, meta))
+}
+
+/// Representation of a packet used in the TPU.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TpuPacket {
+    buffer: Bytes,
+    meta: Meta,
+}
+
+impl TpuPacket {
+    pub fn new(buffer: Bytes, meta: Meta) -> Self {
+        Self { buffer, meta }
+    }
+
+    pub fn from_data<T>(dest: Option<&SocketAddr>, data: T) -> bincode::Result<Self>
+    where
+        T: solana_packet::Encode,
+    {
+        let (buffer, meta) = from_data(dest, data)?;
+        let buffer = buffer.freeze();
+        Ok(Self { buffer, meta })
+    }
+}
+
+impl PacketRead for TpuPacket {
+    fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>,
+    {
+        if self.meta.discard() {
+            None
+        } else {
+            self.buffer.get(index)
+        }
+    }
+
+    #[inline]
+    fn meta(&self) -> &Meta {
+        &self.meta
+    }
+
+    #[inline]
+    fn meta_mut(&mut self) -> &mut Meta {
+        &mut self.meta
+    }
+
+    #[inline]
+    fn size(&self) -> usize {
+        self.buffer.len()
+    }
+}
+
+#[derive(Clone)]
+pub enum PacketType {
+    Packet(Packet),
+    TpuPacket(TpuPacket),
+}
+
+impl PacketRead for PacketType {
+    fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>,
+    {
+        match self {
+            Self::Packet(packet) => packet.data(index),
+            Self::TpuPacket(packet) => packet.data(index),
+        }
+    }
+
+    fn meta(&self) -> &Meta {
+        match self {
+            Self::Packet(packet) => packet.meta(),
+            Self::TpuPacket(packet) => packet.meta(),
+        }
+    }
+
+    fn meta_mut(&mut self) -> &mut Meta {
+        match self {
+            Self::Packet(packet) => packet.meta_mut(),
+            Self::TpuPacket(packet) => packet.meta_mut(),
+        }
+    }
+
+    fn size(&self) -> usize {
+        match self {
+            Self::Packet(packet) => packet.size(),
+            Self::TpuPacket(packet) => packet.size(),
+        }
+    }
+}
+
+pub trait GenericPacketBatch<P>: Deref<Target = Vec<P>> + DerefMut
+where
+    P: PacketRead,
+{
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct TpuPacketBatch {
+    packets: Vec<TpuPacket>,
+}
+
+impl TpuPacketBatch {
+    pub fn with_capacity(capacity: usize) -> Self {
+        let packets = Vec::with_capacity(capacity);
+        Self { packets }
+    }
+}
+
+impl Deref for TpuPacketBatch {
+    type Target = Vec<TpuPacket>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.packets
+    }
+}
+
+impl DerefMut for TpuPacketBatch {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.packets
+    }
+}
+
+impl FromIterator<TpuPacket> for TpuPacketBatch {
+    fn from_iter<T: IntoIterator<Item = TpuPacket>>(iter: T) -> Self {
+        let packets = Vec::from_iter(iter);
+        Self { packets }
+    }
+}
+
+impl GenericPacketBatch<TpuPacket> for TpuPacketBatch {}
+
+impl<'a> IntoIterator for &'a TpuPacketBatch {
+    type Item = &'a TpuPacket;
+    type IntoIter = Iter<'a, TpuPacket>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.packets.iter()
+    }
+}
+
+impl<'a> IntoParallelIterator for &'a TpuPacketBatch {
+    type Iter = rayon::slice::Iter<'a, TpuPacket>;
+    type Item = &'a TpuPacket;
+    fn into_par_iter(self) -> Self::Iter {
+        self.packets.par_iter()
+    }
+}
+
+impl<'a> IntoParallelIterator for &'a mut TpuPacketBatch {
+    type Iter = rayon::slice::IterMut<'a, TpuPacket>;
+    type Item = &'a mut TpuPacket;
+    fn into_par_iter(self) -> Self::Iter {
+        self.packets.par_iter_mut()
+    }
+}
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -172,6 +400,22 @@ impl PacketBatch {
     }
 }
 
+impl Deref for PacketBatch {
+    type Target = Vec<Packet>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.packets
+    }
+}
+
+impl DerefMut for PacketBatch {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.packets
+    }
+}
+
+impl GenericPacketBatch<Packet> for PacketBatch {}
+
 impl<I: SliceIndex<[Packet]>> Index<I> for PacketBatch {
     type Output = I::Output;
 
@@ -219,22 +463,44 @@ impl From<PacketBatch> for Vec<Packet> {
     }
 }
 
-pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<PacketBatch> {
+impl<'a, I> From<I> for PacketBatch
+where
+    I: IntoIterator<Item = &'a TpuPacket>,
+{
+    fn from(tpu_packets: I) -> Self {
+        let recycler = PacketBatchRecycler::default();
+        let mut packet_batch =
+            PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "quic_packet_coalescer");
+        for tpu_packet in tpu_packets {
+            let mut packet = Packet::default();
+            let size = tpu_packet.size();
+            if let Some(data) = tpu_packet.data(..) {
+                packet.buffer_mut()[0..size].copy_from_slice(data);
+            }
+            *packet.meta_mut() = tpu_packet.meta.clone();
+            packet.meta_mut().size = size;
+
+            packet_batch.push(packet);
+        }
+        packet_batch
+    }
+}
+
+pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<TpuPacketBatch> {
     items
         .chunks(chunk_size)
         .map(|batch_items| {
-            let mut batch = PacketBatch::with_capacity(batch_items.len());
-            batch.resize(batch_items.len(), Packet::default());
-            for (item, packet) in batch_items.iter().zip(batch.packets.iter_mut()) {
-                Packet::populate_packet(packet, None, item).expect("serialize request");
-            }
+            let batch: TpuPacketBatch = batch_items
+                .iter()
+                .map(|item| TpuPacket::from_data(None, item).expect("serialize request"))
+                .collect();
             batch
         })
         .collect()
 }
 
 #[cfg(test)]
-fn to_packet_batches_for_tests<T: Serialize>(items: &[T]) -> Vec<PacketBatch> {
+fn to_packet_batches_for_tests<T: Serialize>(items: &[T]) -> Vec<TpuPacketBatch> {
     to_packet_batches(items, NUM_PACKETS)
 }
 

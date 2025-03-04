@@ -12,14 +12,19 @@ use {
         banking_trace::BankingPacketSender,
         sigverify_stage::{SigVerifier, SigVerifyServiceError},
     },
-    agave_banking_stage_ingress_types::BankingPacketBatch,
+    agave_banking_stage_ingress_types::TpuBankingPacketBatch,
     crossbeam_channel::Sender,
-    solana_perf::{cuda_runtime::PinnedVec, packet::PacketBatch, recycler::Recycler, sigverify},
+    solana_perf::{
+        cuda_runtime::PinnedVec,
+        packet::{TpuPacket, TpuPacketBatch},
+        recycler::Recycler,
+        sigverify,
+    },
 };
 
 pub struct TransactionSigVerifier {
     banking_stage_sender: BankingPacketSender,
-    forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
+    forward_stage_sender: Option<Sender<(TpuBankingPacketBatch, bool)>>,
     recycler: Recycler<TxOffset>,
     recycler_out: Recycler<PinnedVec<u8>>,
     reject_non_vote: bool,
@@ -28,7 +33,7 @@ pub struct TransactionSigVerifier {
 impl TransactionSigVerifier {
     pub fn new_reject_non_vote(
         packet_sender: BankingPacketSender,
-        forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
+        forward_stage_sender: Option<Sender<(TpuBankingPacketBatch, bool)>>,
     ) -> Self {
         let mut new_self = Self::new(packet_sender, forward_stage_sender);
         new_self.reject_non_vote = true;
@@ -37,7 +42,7 @@ impl TransactionSigVerifier {
 
     pub fn new(
         banking_stage_sender: BankingPacketSender,
-        forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
+        forward_stage_sender: Option<Sender<(TpuBankingPacketBatch, bool)>>,
     ) -> Self {
         init();
         Self {
@@ -51,13 +56,13 @@ impl TransactionSigVerifier {
 }
 
 impl SigVerifier for TransactionSigVerifier {
-    type SendType = BankingPacketBatch;
+    type SendType = TpuBankingPacketBatch;
 
     fn send_packets(
         &mut self,
-        packet_batches: Vec<PacketBatch>,
+        packet_batches: Vec<TpuPacketBatch>,
     ) -> Result<(), SigVerifyServiceError<Self::SendType>> {
-        let banking_packet_batch = BankingPacketBatch::new(packet_batches);
+        let banking_packet_batch = TpuBankingPacketBatch::new(packet_batches);
         if let Some(forward_stage_sender) = &self.forward_stage_sender {
             self.banking_stage_sender
                 .send(banking_packet_batch.clone())?;
@@ -71,9 +76,9 @@ impl SigVerifier for TransactionSigVerifier {
 
     fn verify_batches(
         &self,
-        mut batches: Vec<PacketBatch>,
+        mut batches: Vec<TpuPacketBatch>,
         valid_packets: usize,
-    ) -> Vec<PacketBatch> {
+    ) -> Vec<TpuPacketBatch> {
         sigverify::ed25519_verify(
             &mut batches,
             &self.recycler,

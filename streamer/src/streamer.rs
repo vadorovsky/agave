@@ -3,7 +3,7 @@
 
 use {
     crate::{
-        packet::{self, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
+        packet::{self, PacketBatch, PacketBatchRecycler, TpuPacket, PACKETS_PER_BATCH},
         sendmmsg::{batch_send, SendPktsError},
         socket::SocketAddrSpace,
     },
@@ -11,6 +11,7 @@ use {
     histogram::Histogram,
     itertools::Itertools,
     solana_packet::Packet,
+    solana_perf::packet::{GenericPacketBatch, PacketRead},
     solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
     std::{
@@ -39,6 +40,9 @@ pub struct StakedNodes {
 
 pub type PacketBatchReceiver = Receiver<PacketBatch>;
 pub type PacketBatchSender = Sender<PacketBatch>;
+
+pub type TpuPacketBatchReceiver = Receiver<Vec<TpuPacket>>;
+pub type TpuPacketBatchSender = Sender<Vec<TpuPacket>>;
 
 #[derive(Error, Debug)]
 pub enum StreamerError {
@@ -375,9 +379,11 @@ fn recv_send(
     Ok(())
 }
 
-pub fn recv_packet_batches(
-    recvr: &PacketBatchReceiver,
-) -> Result<(Vec<PacketBatch>, usize, Duration)> {
+pub fn recv_packet_batches<B, P>(recvr: &Receiver<B>) -> Result<(Vec<B>, usize, Duration)>
+where
+    B: GenericPacketBatch<P>,
+    P: PacketRead,
+{
     let recv_start = Instant::now();
     let timer = Duration::new(1, 0);
     let packet_batch = recvr.recv_timeout(timer)?;

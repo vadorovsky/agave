@@ -1,7 +1,7 @@
 //! Utility to deduplicate baches of incoming network packets.
 
 use {
-    crate::packet::PacketBatch,
+    crate::packet::{GenericPacketBatch, PacketRead},
     ahash::RandomState,
     rand::Rng,
     std::{
@@ -85,13 +85,17 @@ fn new_random_state<R: Rng>(rng: &mut R) -> RandomState {
     RandomState::with_seeds(rng.gen(), rng.gen(), rng.gen(), rng.gen())
 }
 
-pub fn dedup_packets_and_count_discards<const K: usize>(
+pub fn dedup_packets_and_count_discards<B, P, const K: usize>(
     deduper: &Deduper<K, [u8]>,
-    batches: &mut [PacketBatch],
-) -> u64 {
+    batches: &mut [B],
+) -> u64
+where
+    B: GenericPacketBatch<P>,
+    P: PacketRead,
+{
     batches
         .iter_mut()
-        .flat_map(PacketBatch::iter_mut)
+        .flat_map(|batch| batch.iter_mut())
         .map(|packet| {
             if !packet.meta().discard()
                 && packet
