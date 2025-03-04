@@ -2,16 +2,20 @@
 
 use {
     crate::result::{Error, Result},
-    crossbeam_channel::{unbounded, RecvTimeoutError},
+    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     solana_metrics::{inc_new_counter_debug, inc_new_counter_info},
-    solana_perf::{packet::PacketBatchRecycler, recycler::Recycler},
+    solana_perf::{
+        packet::{PacketBatchRecycler, TpuPacket},
+        recycler::Recycler,
+    },
     solana_poh::poh_recorder::PohRecorder,
     solana_sdk::{
         clock::{DEFAULT_TICKS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
         packet::{Packet, PacketFlags},
     },
     solana_streamer::streamer::{
-        self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats,
+        self, PacketBatchReceiver, PacketBatchSender, StreamerReceiveStats, TpuPacketBatchReceiver,
+        TpuPacketBatchSender,
     },
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     std::{
@@ -69,8 +73,8 @@ impl FetchStage {
         exit: Arc<AtomicBool>,
         sender: &PacketBatchSender,
         vote_sender: &PacketBatchSender,
-        forward_sender: &PacketBatchSender,
-        forward_receiver: PacketBatchReceiver,
+        forward_sender: &TpuPacketBatchSender,
+        forward_receiver: TpuPacketBatchReceiver,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         coalesce: Duration,
         in_vote_only_mode: Option<Arc<AtomicBool>>,

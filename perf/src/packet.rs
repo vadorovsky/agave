@@ -3,13 +3,14 @@ pub use solana_packet::{self, Meta, Packet, PacketFlags, PACKET_DATA_SIZE};
 use {
     crate::{cuda_runtime::PinnedVec, recycler::Recycler},
     bincode::config::Options,
+    bytes::{BufMut, Bytes, BytesMut},
     rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     std::{
         borrow::Borrow,
         io::Read,
         net::SocketAddr,
-        ops::{Index, IndexMut},
+        ops::{Deref, DerefMut, Index, IndexMut},
         slice::{Iter, IterMut, SliceIndex},
     },
 };
@@ -18,6 +19,134 @@ pub const NUM_PACKETS: usize = 1024 * 8;
 
 pub const PACKETS_PER_BATCH: usize = 64;
 pub const NUM_RCVMMSGS: usize = 64;
+
+/// Read data and metadata from a packet.
+pub trait PacketRead {
+    fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>;
+    fn meta(&self) -> &Meta;
+    fn meta_mut(&mut self) -> &mut Meta;
+    fn size(&self) -> usize;
+
+    fn deserialize_slice<T, I>(&self, index: I) -> bincode::Result<T>
+    where
+        T: serde::de::DeserializeOwned,
+        I: SliceIndex<[u8], Output = [u8]>,
+    {
+        let bytes = self.data(index).ok_or(bincode::ErrorKind::SizeLimit)?;
+        bincode::options()
+            .with_limit(PACKET_DATA_SIZE as u64)
+            .with_fixint_encoding()
+            .reject_trailing_bytes()
+            .deserialize(bytes)
+    }
+}
+
+impl PacketRead for Packet {
+    fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>,
+    {
+        self.data(index)
+    }
+
+    #[inline]
+    fn meta(&self) -> &Meta {
+        self.meta()
+    }
+
+    #[inline]
+    fn meta_mut(&mut self) -> &mut Meta {
+        self.meta_mut()
+    }
+
+    fn size(&self) -> usize {
+        self.meta().size
+    }
+}
+
+/// Creates a [`BytesMut`] buffer and [`Meta`] from the given serializable
+/// `data`.
+fn from_data<T>(dest: Option<&SocketAddr>, data: T) -> bincode::Result<(BytesMut, Meta)>
+where
+    T: solana_packet::Encode,
+{
+    let buffer = BytesMut::with_capacity(PACKET_DATA_SIZE);
+    let mut writer = buffer.writer();
+    data.encode(&mut writer)?;
+    let buffer = writer.into_inner();
+    let mut meta = Meta::default();
+
+    // We don't use the `size` field of `Meta` in `TpuPacket`/`TpuPacketMut`.
+    // Instead, we rely on the length of the buffers. There is no need for
+    // tracking the size manually.
+    // However, removing the `size` field from `Meta` would break ABI and the
+    // `Packet` struct. Maintaining multiple `Meta` implementations would add
+    // more maintenance burden.
+    meta.size = usize::MAX;
+
+    if let Some(dest) = dest {
+        meta.set_socket_addr(dest);
+    }
+    Ok((buffer, meta))
+}
+
+/// Representation of a packet used in the TPU.
+#[derive(Clone, Debug, Default)]
+pub struct TpuPacket {
+    buffer: Bytes,
+    meta: Meta,
+}
+
+impl TpuPacket {
+    pub fn new(buffer: Bytes, meta: Meta) -> Self {
+        Self { buffer, meta }
+    }
+
+    pub fn from_data<T>(dest: Option<&SocketAddr>, data: T) -> bincode::Result<Self>
+    where
+        T: solana_packet::Encode,
+    {
+        let (buffer, meta) = from_data(dest, data)?;
+        let buffer = buffer.freeze();
+        Ok(Self { buffer, meta })
+    }
+}
+
+impl PacketRead for TpuPacket {
+    fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>,
+    {
+        if self.meta.discard() {
+            None
+        } else {
+            self.buffer.get(index)
+        }
+    }
+
+    #[inline]
+    fn meta(&self) -> &Meta {
+        &self.meta
+    }
+
+    #[inline]
+    fn meta_mut(&mut self) -> &mut Meta {
+        &mut self.meta
+    }
+
+    #[inline]
+    fn size(&self) -> usize {
+        self.buffer.len()
+    }
+}
+
+#[derive(Debug)]
+pub enum GenericPacketBatch {
+    PacketBatch(PacketBatch),
+    TpuPacketBatch(Vec<TpuPacket>),
+}
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -172,6 +301,20 @@ impl PacketBatch {
     }
 }
 
+impl Deref for PacketBatch {
+    type Target = [Packet];
+
+    fn deref(&self) -> &Self::Target {
+        &self.packets
+    }
+}
+
+impl DerefMut for PacketBatch {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.packets
+    }
+}
+
 impl<I: SliceIndex<[Packet]>> Index<I> for PacketBatch {
     type Output = I::Output;
 
@@ -216,6 +359,29 @@ impl<'a> IntoParallelIterator for &'a mut PacketBatch {
 impl From<PacketBatch> for Vec<Packet> {
     fn from(batch: PacketBatch) -> Self {
         batch.packets.into()
+    }
+}
+
+impl<'a, I> From<I> for PacketBatch
+where
+    I: IntoIterator<Item = &'a TpuPacket>,
+{
+    fn from(tpu_packets: I) -> Self {
+        let recycler = PacketBatchRecycler::default();
+        let mut packet_batch =
+            PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "quic_packet_coalescer");
+        for tpu_packet in tpu_packets {
+            let mut packet = Packet::default();
+            let size = tpu_packet.size();
+            if let Some(data) = tpu_packet.data(..) {
+                packet.buffer_mut()[0..size].copy_from_slice(data);
+            }
+            *packet.meta_mut() = tpu_packet.meta.clone();
+            packet.meta_mut().size = size;
+
+            packet_batch.push(packet);
+        }
+        packet_batch
     }
 }
 
