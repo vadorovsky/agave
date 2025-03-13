@@ -43,6 +43,45 @@ pub trait PacketRead {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum GenericPacket {
+    Packet(Packet),
+    TpuPacket(TpuPacket),
+}
+
+impl PacketRead for GenericPacket {
+    fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>,
+    {
+        match self {
+            Self::Packet(packet) => packet.data(index),
+            Self::TpuPacket(packet) => packet.data(index),
+        }
+    }
+
+    fn meta(&self) -> &Meta {
+        match self {
+            Self::Packet(packet) => packet.meta(),
+            Self::TpuPacket(packet) => packet.meta(),
+        }
+    }
+
+    fn meta_mut(&mut self) -> &mut Meta {
+        match self {
+            Self::Packet(packet) => packet.meta_mut(),
+            Self::TpuPacket(packet) => packet.meta_mut(),
+        }
+    }
+
+    fn size(&self) -> usize {
+        match self {
+            Self::Packet(packet) => packet.size(),
+            Self::TpuPacket(packet) => packet.size(),
+        }
+    }
+}
+
 impl PacketRead for Packet {
     fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
     where
@@ -93,7 +132,7 @@ where
 }
 
 /// Representation of a packet used in the TPU.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TpuPacket {
     buffer: Bytes,
     meta: Meta,
@@ -142,10 +181,36 @@ impl PacketRead for TpuPacket {
     }
 }
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct TpuPacketBatch {
+    packets: Vec<TpuPacket>,
+}
+
+impl Deref for TpuPacketBatch {
+    type Target = Vec<TpuPacket>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.packets
+    }
+}
+
 #[derive(Debug)]
 pub enum GenericPacketBatch {
     PacketBatch(PacketBatch),
-    TpuPacketBatch(Vec<TpuPacket>),
+    TpuPacketBatch(TpuPacketBatch),
+}
+
+impl GenericPacketBatch {
+    pub fn iter(&self) -> impl Iterator<Item = GenericPacket> {
+        match self {
+            Self::PacketBatch(packet_batch) => packet_batch
+                .iter()
+                .map(|packet| &GenericPacket::Packet(*packet)),
+            Self::TpuPacketBatch(packet_batch) => packet_batch
+                .iter()
+                .map(|packet| &GenericPacket::TpuPacket(*packet)),
+        }
+    }
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
