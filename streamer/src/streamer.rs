@@ -11,7 +11,7 @@ use {
     histogram::Histogram,
     itertools::Itertools,
     solana_packet::Packet,
-    solana_perf::packet::{GenericPacketBatch, PacketRead},
+    solana_perf::packet::{GenericPacketBatch, PacketBatchType, PacketRead},
     solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
     std::{
@@ -117,7 +117,7 @@ pub type Result<T> = std::result::Result<T, StreamerError>;
 fn recv_loop(
     socket: &UdpSocket,
     exit: &AtomicBool,
-    packet_batch_sender: &PacketBatchSender,
+    packet_batch_sender: &Sender<PacketBatchType>,
     recycler: &PacketBatchRecycler,
     stats: &StreamerReceiveStats,
     coalesce: Duration,
@@ -164,7 +164,9 @@ fn recv_loop(
                     packet_batch
                         .iter_mut()
                         .for_each(|p| p.meta_mut().set_from_staked_node(is_staked_service));
-                    if let Err(TrySendError::Full(_)) = packet_batch_sender.try_send(packet_batch) {
+                    if let Err(TrySendError::Full(_)) =
+                        packet_batch_sender.try_send(PacketBatchType::PacketBatch(packet_batch))
+                    {
                         stats.num_packets_dropped.fetch_add(len, Ordering::Relaxed);
                     }
                 }

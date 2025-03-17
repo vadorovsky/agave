@@ -148,6 +148,12 @@ pub enum PacketType {
     TpuPacket(TpuPacket),
 }
 
+impl From<Packet> for PacketType {
+    fn from(packet: Packet) -> Self {
+        Self::Packet(packet)
+    }
+}
+
 impl PacketRead for PacketType {
     fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
     where
@@ -484,6 +490,11 @@ where
         }
         packet_batch
     }
+}
+
+pub enum PacketBatchType {
+    PacketBatch(PacketBatch),
+    TpuPacketBatch(TpuPacketBatch),
 }
 
 pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<TpuPacketBatch> {

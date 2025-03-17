@@ -138,18 +138,18 @@ impl Tpu {
             vote_quic: tpu_vote_quic_sockets,
         } = sockets;
 
-        let (fetch_packet_sender, fetch_packet_receiver) = unbounded();
-        let (fetch_vote_packet_sender, fetch_vote_packet_receiver) = unbounded();
-        let (fetch_forwarded_packet_sender, fetch_forwarded_packet_receiver) = unbounded();
+        let (packet_sender, packet_receiver) = unbounded();
+        let (vote_packet_sender, vote_packet_receiver) = unbounded();
+        let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
         let fetch_stage = FetchStage::new_with_sender(
             transactions_sockets,
             tpu_forwards_sockets,
             tpu_vote_sockets,
             exit.clone(),
-            &fetch_packet_sender,
-            &fetch_vote_packet_sender,
-            &fetch_forwarded_packet_sender,
-            fetch_forwarded_packet_receiver,
+            &packet_sender,
+            &vote_packet_sender,
+            &forwarded_packet_sender,
+            forwarded_packet_receiver,
             poh_recorder,
             tpu_coalesce,
             Some(bank_forks.read().unwrap().get_vote_only_mode_signal()),
@@ -171,10 +171,6 @@ impl Tpu {
             gossip_vote_sender,
             gossip_vote_receiver,
         } = banking_tracer_channels;
-
-        let (packet_sender, packet_receiver) = unbounded();
-        let (vote_packet_sender, vote_packet_receiver) = unbounded();
-        let (forwarded_packet_sender, forwarded_packet_receiver) = unbounded();
 
         // Streamer for Votes:
         let SpawnServerResult {
