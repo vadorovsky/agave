@@ -8,7 +8,7 @@ use {
         sigverify_shreds::{sign_shreds_cpu, sign_shreds_gpu, sign_shreds_gpu_pinned_keypair},
     },
     solana_perf::{
-        packet::{Packet, PacketBatch},
+        packet::{Packet, PinnedPacketBatch},
         recycler_cache::RecyclerCache,
     },
     solana_rayon_threadlimit::get_thread_count,
@@ -27,7 +27,7 @@ fn bench_sigverify_shreds_sign_gpu(bencher: &mut Bencher) {
         .unwrap();
     let recycler_cache = RecyclerCache::default();
 
-    let mut packet_batch = PacketBatch::new_pinned_with_capacity(NUM_PACKETS);
+    let mut packet_batch = PinnedPacketBatch::new_pinned_with_capacity(NUM_PACKETS);
     packet_batch.resize(NUM_PACKETS, Packet::default());
     let slot = 0xdead_c0de;
     for p in packet_batch.iter_mut() {
@@ -74,7 +74,7 @@ fn bench_sigverify_shreds_sign_cpu(bencher: &mut Bencher) {
         .num_threads(get_thread_count())
         .build()
         .unwrap();
-    let mut packet_batch = PacketBatch::default();
+    let mut packet_batch = PinnedPacketBatch::default();
     let slot = 0xdead_c0de;
     packet_batch.resize(NUM_PACKETS, Packet::default());
     for p in packet_batch.iter_mut() {

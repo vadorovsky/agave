@@ -17,7 +17,7 @@ use {
     solana_ledger::blockstore::Blockstore,
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_debug,
-    solana_perf::packet::{self, PacketBatch},
+    solana_perf::packet::{self, PinnedPacketBatch},
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSender},
         rpc_subscriptions::RpcSubscriptions,
@@ -277,7 +277,7 @@ impl ClusterInfoVoteListener {
     fn verify_votes(
         votes: Vec<Transaction>,
         root_bank_cache: &mut RootBankCache,
-    ) -> (Vec<Transaction>, Vec<PacketBatch>) {
+    ) -> (Vec<Transaction>, Vec<PinnedPacketBatch>) {
         let mut packet_batches = packet::to_packet_batches(&votes, 1);
 
         // Votes should already be filtered by this point.
@@ -1512,7 +1512,7 @@ mod tests {
         assert!(packets.is_empty());
     }
 
-    fn verify_packets_len(packets: &[PacketBatch], ref_value: usize) {
+    fn verify_packets_len(packets: &[PinnedPacketBatch], ref_value: usize) {
         let num_packets: usize = packets.iter().map(|pb| pb.len()).sum();
         assert_eq!(num_packets, ref_value);
     }

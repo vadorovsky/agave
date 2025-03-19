@@ -674,7 +674,7 @@ mod tests {
         crate::banking_stage::tests::create_slow_genesis_config,
         crossbeam_channel::{unbounded, Receiver},
         solana_ledger::genesis_utils::GenesisConfigInfo,
-        solana_perf::packet::{to_packet_batches, Packet, PacketBatch},
+        solana_perf::packet::{to_packet_batches, Packet, PinnedPacketBatch},
         solana_pubkey::Pubkey,
         solana_sdk::{
             hash::Hash,
@@ -900,7 +900,7 @@ mod tests {
         let mut timing_metrics = SchedulerTimingMetrics::default();
         let mut count_metrics = SchedulerCountMetrics::default();
 
-        let packet_batches = Arc::new(vec![PacketBatch::new(vec![Packet::new(
+        let packet_batches = Arc::new(vec![PinnedPacketBatch::new(vec![Packet::new(
             [1u8; PACKET_DATA_SIZE],
             Meta::default(),
         )])]);

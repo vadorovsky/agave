@@ -31,7 +31,7 @@ use {
     },
     solana_perf::{
         data_budget::DataBudget,
-        packet::{Packet, PacketBatch, PacketBatchRecycler},
+        packet::{Packet, PacketBatchRecycler, PinnedPacketBatch},
     },
     solana_runtime::{bank_forks::BankForks, root_bank_cache::RootBankCache},
     solana_sdk::{
@@ -420,7 +420,7 @@ impl ServeRepair {
         request: RepairProtocol,
         stats: &mut ServeRepairStats,
         ping_cache: &mut PingCache,
-    ) -> Option<PacketBatch> {
+    ) -> Option<PinnedPacketBatch> {
         let now = Instant::now();
         let (res, label) = {
             match &request {
@@ -1037,7 +1037,7 @@ impl ServeRepair {
 
         if !pending_pings.is_empty() {
             stats.pings_sent += pending_pings.len();
-            let batch = PacketBatch::new(pending_pings);
+            let batch = PinnedPacketBatch::new(pending_pings);
             let _ = packet_batch_sender.send(batch);
         }
     }
@@ -1220,7 +1220,7 @@ impl ServeRepair {
     pub(crate) fn handle_repair_response_pings(
         repair_socket: &UdpSocket,
         keypair: &Keypair,
-        packet_batch: &mut PacketBatch,
+        packet_batch: &mut PinnedPacketBatch,
         stats: &mut ShredFetchStats,
     ) {
         let mut pending_pongs = Vec::default();
@@ -1299,7 +1299,7 @@ impl ServeRepair {
         slot: Slot,
         shred_index: u64,
         nonce: Nonce,
-    ) -> Option<PacketBatch> {
+    ) -> Option<PinnedPacketBatch> {
         // Try to find the requested index in one of the slots
         let packet = repair_response::repair_response_packet(
             blockstore,
@@ -1308,7 +1308,7 @@ impl ServeRepair {
             from_addr,
             nonce,
         )?;
-        Some(PacketBatch::new_unpinned_with_recycler_data(
+        Some(PinnedPacketBatch::new_unpinned_with_recycler_data(
             recycler,
             "run_window_request",
             vec![packet],
@@ -1322,7 +1322,7 @@ impl ServeRepair {
         slot: Slot,
         highest_index: u64,
         nonce: Nonce,
-    ) -> Option<PacketBatch> {
+    ) -> Option<PinnedPacketBatch> {
         // Try to find the requested index in one of the slots
         let meta = blockstore.meta(slot).ok()??;
         if meta.received > highest_index {
@@ -1334,7 +1334,7 @@ impl ServeRepair {
                 from_addr,
                 nonce,
             )?;
-            return Some(PacketBatch::new_unpinned_with_recycler_data(
+            return Some(PinnedPacketBatch::new_unpinned_with_recycler_data(
                 recycler,
                 "run_highest_window_request",
                 vec![packet],
@@ -1350,9 +1350,9 @@ impl ServeRepair {
         slot: Slot,
         max_responses: usize,
         nonce: Nonce,
-    ) -> Option<PacketBatch> {
+    ) -> Option<PinnedPacketBatch> {
         let mut res =
-            PacketBatch::new_unpinned_with_recycler(recycler, max_responses, "run_orphan");
+            PinnedPacketBatch::new_unpinned_with_recycler(recycler, max_responses, "run_orphan");
         // Try to find the next "n" parent slots of the input slot
         let packets = std::iter::successors(blockstore.meta(slot).ok()?, |meta| {
             blockstore.meta(meta.parent_slot?).ok()?
@@ -1378,7 +1378,7 @@ impl ServeRepair {
         blockstore: &Blockstore,
         slot: Slot,
         nonce: Nonce,
-    ) -> Option<PacketBatch> {
+    ) -> Option<PinnedPacketBatch> {
         let ancestor_slot_hashes = if blockstore.is_duplicate_confirmed(slot) {
             let ancestor_iterator =
                 AncestorIteratorWithHash::from(AncestorIterator::new_inclusive(slot, blockstore));
@@ -1398,7 +1398,7 @@ impl ServeRepair {
             from_addr,
             nonce,
         )?;
-        Some(PacketBatch::new_unpinned_with_recycler_data(
+        Some(PinnedPacketBatch::new_unpinned_with_recycler_data(
             recycler,
             "run_ancestor_hashes",
             vec![packet],
@@ -1426,7 +1426,7 @@ where
 
 // Returns true on success.
 fn send_response(
-    packets: PacketBatch,
+    packets: PinnedPacketBatch,
     protocol: Protocol,
     packet_batch_sender: &PacketBatchSender,
     repair_response_quic_sender: &AsyncSender<(SocketAddr, Bytes)>,

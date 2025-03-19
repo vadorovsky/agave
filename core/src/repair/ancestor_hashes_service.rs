@@ -21,7 +21,7 @@ use {
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, ping_pong::Pong},
     solana_ledger::blockstore::Blockstore,
     solana_perf::{
-        packet::{deserialize_from_with_limit, Packet, PacketBatch, PacketFlags},
+        packet::{deserialize_from_with_limit, Packet, PacketFlags, PinnedPacketBatch},
         recycler::Recycler,
     },
     solana_runtime::bank::Bank,
@@ -339,7 +339,7 @@ impl AncestorHashesService {
 
     fn process_packet_batch(
         ancestor_hashes_request_statuses: &DashMap<Slot, AncestorRequestStatus>,
-        packet_batch: PacketBatch,
+        packet_batch: PinnedPacketBatch,
         stats: &mut AncestorHashesResponsesStats,
         outstanding_requests: &RwLock<OutstandingAncestorHashesRepairs>,
         blockstore: &Blockstore,

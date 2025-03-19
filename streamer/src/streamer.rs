@@ -3,7 +3,7 @@
 
 use {
     crate::{
-        packet::{self, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
+        packet::{self, PacketBatchRecycler, PinnedPacketBatch, PACKETS_PER_BATCH},
         sendmmsg::{batch_send, SendPktsError},
         socket::SocketAddrSpace,
     },
@@ -37,8 +37,8 @@ pub struct StakedNodes {
     min_stake: u64,
 }
 
-pub type PacketBatchReceiver = Receiver<PacketBatch>;
-pub type PacketBatchSender = Sender<PacketBatch>;
+pub type PacketBatchReceiver = Receiver<PinnedPacketBatch>;
+pub type PacketBatchSender = Sender<PinnedPacketBatch>;
 
 #[derive(Error, Debug)]
 pub enum StreamerError {
@@ -49,7 +49,7 @@ pub enum StreamerError {
     RecvTimeout(#[from] RecvTimeoutError),
 
     #[error("send packets error")]
-    Send(#[from] SendError<PacketBatch>),
+    Send(#[from] SendError<PinnedPacketBatch>),
 
     #[error(transparent)]
     SendPktsError(#[from] SendPktsError),
@@ -123,9 +123,9 @@ fn recv_loop(
 ) -> Result<()> {
     loop {
         let mut packet_batch = if use_pinned_memory {
-            PacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
+            PinnedPacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
         } else {
-            PacketBatch::with_capacity(PACKETS_PER_BATCH)
+            PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH)
         };
         loop {
             // Check for exit signal, even if socket is busy
@@ -377,7 +377,7 @@ fn recv_send(
 
 pub fn recv_packet_batches(
     recvr: &PacketBatchReceiver,
-) -> Result<(Vec<PacketBatch>, usize, Duration)> {
+) -> Result<(Vec<PinnedPacketBatch>, usize, Duration)> {
     let recv_start = Instant::now();
     let timer = Duration::new(1, 0);
     let packet_batch = recvr.recv_timeout(timer)?;
@@ -450,7 +450,7 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{Packet, PacketBatch, PACKET_DATA_SIZE},
+            packet::{Packet, PinnedPacketBatch, PACKET_DATA_SIZE},
             streamer::{receiver, responder},
         },
         crossbeam_channel::unbounded,
@@ -485,7 +485,7 @@ mod test {
     #[test]
     fn streamer_debug() {
         write!(io::sink(), "{:?}", Packet::default()).unwrap();
-        write!(io::sink(), "{:?}", PacketBatch::default()).unwrap();
+        write!(io::sink(), "{:?}", PinnedPacketBatch::default()).unwrap();
     }
     #[test]
     fn streamer_send_test() {
@@ -519,7 +519,7 @@ mod test {
                 SocketAddrSpace::Unspecified,
                 None,
             );
-            let mut packet_batch = PacketBatch::default();
+            let mut packet_batch = PinnedPacketBatch::default();
             for i in 0..NUM_PACKETS {
                 let mut p = Packet::default();
                 {

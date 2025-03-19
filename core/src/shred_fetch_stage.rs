@@ -9,7 +9,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::shred::{self, should_discard_shred, ShredFetchStats},
     solana_perf::packet::{
-        Packet, PacketBatch, PacketBatchRecycler, PacketFlags, PACKETS_PER_BATCH,
+        Packet, PacketBatchRecycler, PacketFlags, PinnedPacketBatch, PACKETS_PER_BATCH,
     },
     solana_runtime::bank_forks::BankForks,
     solana_sdk::{
@@ -53,7 +53,7 @@ impl ShredFetchStage {
     // updates packets received on a channel and sends them on another channel
     fn modify_packets(
         recvr: PacketBatchReceiver,
-        sendr: Sender<PacketBatch>,
+        sendr: Sender<PinnedPacketBatch>,
         bank_forks: &RwLock<BankForks>,
         shred_version: u16,
         name: &'static str,
@@ -173,7 +173,7 @@ impl ShredFetchStage {
         modifier_thread_name: &'static str,
         sockets: Vec<Arc<UdpSocket>>,
         exit: Arc<AtomicBool>,
-        sender: Sender<PacketBatch>,
+        sender: Sender<PinnedPacketBatch>,
         recycler: PacketBatchRecycler,
         bank_forks: Arc<RwLock<BankForks>>,
         shred_version: u16,
@@ -225,7 +225,7 @@ impl ShredFetchStage {
         turbine_quic_endpoint_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_socket: Arc<UdpSocket>,
-        sender: Sender<PacketBatch>,
+        sender: Sender<PinnedPacketBatch>,
         shred_version: u16,
         bank_forks: Arc<RwLock<BankForks>>,
         cluster_info: Arc<ClusterInfo>,
@@ -381,7 +381,7 @@ fn verify_repair_nonce(
 pub(crate) fn receive_quic_datagrams(
     quic_datagrams_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
     flags: PacketFlags,
-    sender: Sender<PacketBatch>,
+    sender: Sender<PinnedPacketBatch>,
     recycler: PacketBatchRecycler,
     exit: Arc<AtomicBool>,
 ) {
@@ -393,8 +393,11 @@ pub(crate) fn receive_quic_datagrams(
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => return,
         };
-        let mut packet_batch =
-            PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "receive_quic_datagrams");
+        let mut packet_batch = PinnedPacketBatch::new_with_recycler(
+            &recycler,
+            PACKETS_PER_BATCH,
+            "receive_quic_datagrams",
+        );
         unsafe {
             packet_batch.set_len(PACKETS_PER_BATCH);
         };

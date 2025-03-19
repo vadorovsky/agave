@@ -487,7 +487,7 @@ mod tests {
         crossbeam_channel::unbounded,
         packet::PacketFlags,
         solana_net_utils::bind_to_unspecified,
-        solana_perf::packet::{Packet, PacketBatch},
+        solana_perf::packet::{Packet, PinnedPacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::genesis_utils::create_genesis_config,
         solana_sdk::{hash::Hash, signature::Keypair, system_transaction},
@@ -567,12 +567,12 @@ mod tests {
         );
 
         // Send packet batches.
-        let non_vote_packets = BankingPacketBatch::new(vec![PacketBatch::new(vec![
+        let non_vote_packets = BankingPacketBatch::new(vec![PinnedPacketBatch::new(vec![
             simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE),
             simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD),
             simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::FORWARDED),
         ])]);
-        let vote_packets = BankingPacketBatch::new(vec![PacketBatch::new(vec![
+        let vote_packets = BankingPacketBatch::new(vec![PinnedPacketBatch::new(vec![
             simple_transfer_with_flags(PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE),
             simple_transfer_with_flags(
                 PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD,

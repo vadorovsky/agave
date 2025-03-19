@@ -1,7 +1,7 @@
 //! Utility to deduplicate baches of incoming network packets.
 
 use {
-    crate::packet::PacketBatch,
+    crate::packet::{PacketRead, PinnedPacketBatch},
     ahash::RandomState,
     rand::Rng,
     std::{
@@ -87,11 +87,11 @@ fn new_random_state<R: Rng>(rng: &mut R) -> RandomState {
 
 pub fn dedup_packets_and_count_discards<const K: usize>(
     deduper: &Deduper<K, [u8]>,
-    batches: &mut [PacketBatch],
+    batches: &mut [PinnedPacketBatch],
 ) -> u64 {
     batches
         .iter_mut()
-        .flat_map(PacketBatch::iter_mut)
+        .flat_map(PinnedPacketBatch::iter_mut)
         .map(|packet| {
             if !packet.meta().discard()
                 && packet
@@ -112,7 +112,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            packet::{to_packet_batches, Packet},
+            packet::{to_packet_batches, PinnedPacket as Packet},
             sigverify,
             test_tx::test_tx,
         },

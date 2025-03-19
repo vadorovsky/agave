@@ -14,7 +14,7 @@ use {
     rayon::prelude::*,
     serde::{Deserialize, Serialize},
     std::{
-        ops::{Index, IndexMut},
+        ops::{Deref, DerefMut, Index, IndexMut},
         os::raw::c_int,
         slice::{Iter, IterMut, SliceIndex},
         sync::Weak,
@@ -321,6 +321,20 @@ impl<T: Clone + Default + Sized> Clone for PinnedVec<T> {
             pinnable: self.pinnable,
             recycler: self.recycler.clone(),
         }
+    }
+}
+
+impl<T: Sized + Default + Clone> Deref for PinnedVec<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.x
+    }
+}
+
+impl<T: Sized + Default + Clone> DerefMut for PinnedVec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.x
     }
 }
 
