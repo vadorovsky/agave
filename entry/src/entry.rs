@@ -17,7 +17,7 @@ use {
     solana_packet::Meta,
     solana_perf::{
         cuda_runtime::PinnedVec,
-        packet::{Packet, PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
+        packet::{Packet, PacketBatchRecycler, PinnedPacketBatch, PACKETS_PER_BATCH},
         perf_libs,
         recycler::Recycler,
         sigverify,
@@ -522,7 +522,7 @@ fn start_verify_transactions_gpu<Tx: TransactionWithMeta + Send + Sync + 'static
             .par_chunks(PACKETS_PER_BATCH)
             .map(|transaction_chunk| {
                 let num_transactions = transaction_chunk.len();
-                let mut packet_batch = PacketBatch::new_with_recycler(
+                let mut packet_batch = PinnedPacketBatch::new_with_recycler(
                     &verify_recyclers.packet_recycler,
                     num_transactions,
                     "entry-sig-verify",

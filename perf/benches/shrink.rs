@@ -6,7 +6,7 @@ extern crate test;
 use {
     rand::prelude::*,
     solana_perf::{
-        packet::{to_packet_batches, PacketBatch, PACKETS_PER_BATCH},
+        packet::{to_packet_batches, PacketBatch, PacketRead, PACKETS_PER_BATCH},
         sigverify,
     },
     test::Bencher,

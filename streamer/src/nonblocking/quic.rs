@@ -23,7 +23,7 @@ use {
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::{PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
+    solana_perf::packet::{PacketBatchRecycler, PinnedPacketBatch, PACKETS_PER_BATCH},
     solana_pubkey::Pubkey,
     solana_quic_definitions::{
         QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_MAX_STAKED_CONCURRENT_STREAMS,
@@ -155,7 +155,7 @@ pub fn spawn_server(
     name: &'static str,
     sock: UdpSocket,
     keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: Sender<PinnedPacketBatch>,
     exit: Arc<AtomicBool>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
@@ -175,7 +175,7 @@ pub fn spawn_server_multi(
     name: &'static str,
     sockets: Vec<UdpSocket>,
     keypair: &Keypair,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: Sender<PinnedPacketBatch>,
     exit: Arc<AtomicBool>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
@@ -282,7 +282,7 @@ impl ClientConnectionTracker {
 async fn run_server(
     name: &'static str,
     endpoints: Vec<Endpoint>,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: Sender<PinnedPacketBatch>,
     exit: Arc<AtomicBool>,
     max_connections_per_peer: usize,
     staked_nodes: Arc<RwLock<StakedNodes>>,
@@ -890,7 +890,7 @@ fn handle_connection_error(e: quinn::ConnectionError, stats: &StreamerStats, fro
 // Holder(s) of the AsyncSender<PacketAccumulator> on the other end should not
 // wait for this function to exit
 async fn packet_batch_sender(
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: Sender<PinnedPacketBatch>,
     packet_receiver: AsyncReceiver<PacketAccumulator>,
     exit: Arc<AtomicBool>,
     stats: Arc<StreamerStats>,
@@ -901,8 +901,11 @@ async fn packet_batch_sender(
     let mut batch_start_time = Instant::now();
     loop {
         let mut packet_perf_measure: Vec<([u8; 64], Instant)> = Vec::default();
-        let mut packet_batch =
-            PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "quic_packet_coalescer");
+        let mut packet_batch = PinnedPacketBatch::new_with_recycler(
+            &recycler,
+            PACKETS_PER_BATCH,
+            "quic_packet_coalescer",
+        );
         let mut total_bytes: usize = 0;
 
         stats
@@ -1554,7 +1557,7 @@ pub mod test {
         tokio::time::sleep,
     };
 
-    pub async fn check_timeout(receiver: Receiver<PacketBatch>, server_address: SocketAddr) {
+    pub async fn check_timeout(receiver: Receiver<PinnedPacketBatch>, server_address: SocketAddr) {
         let conn1 = make_client_endpoint(&server_address, None).await;
         let total = 30;
         for i in 0..total {
@@ -1602,7 +1605,7 @@ pub mod test {
     }
 
     pub async fn check_multiple_writes(
-        receiver: Receiver<PacketBatch>,
+        receiver: Receiver<PinnedPacketBatch>,
         server_address: SocketAddr,
         client_keypair: Option<&Keypair>,
     ) {

@@ -472,7 +472,7 @@ mod tests {
         super::*,
         itertools::Itertools,
         rand::{thread_rng, Rng},
-        solana_perf::packet::{Packet, PacketBatch, PacketFlags},
+        solana_perf::packet::{Packet, PacketFlags, PinnedPacketBatch},
         solana_runtime::{
             bank::Bank,
             genesis_utils::{self, ValidatorVoteKeypairs},
@@ -511,7 +511,7 @@ mod tests {
     }
 
     fn deserialize_packets<'a>(
-        packet_batch: &'a PacketBatch,
+        packet_batch: &'a PinnedPacketBatch,
         packet_indexes: &'a [usize],
         vote_source: VoteSource,
     ) -> impl Iterator<Item = LatestValidatorVotePacket> + 'a {
@@ -569,7 +569,7 @@ mod tests {
         )
         .unwrap();
         let packet_batch =
-            PacketBatch::new(vec![tower_sync, tower_sync_switch, random_transaction]);
+            PinnedPacketBatch::new(vec![tower_sync, tower_sync_switch, random_transaction]);
 
         let deserialized_packets = deserialize_packets(
             &packet_batch,
