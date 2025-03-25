@@ -18,13 +18,17 @@ pub fn discard_batches_randomly(
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::packet::Packet};
+    use {
+        super::*,
+        crate::packet::{BytesPacket, Meta, UnpinnedPacketBatch},
+        bytes::Bytes,
+    };
 
     #[test]
     fn test_batch_discard_random() {
         solana_logger::setup();
-        let mut batch = PacketBatch::default();
-        batch.resize(1, Packet::default());
+        let mut batch = UnpinnedPacketBatch::new();
+        batch.resize(1, BytesPacket::new(Bytes::new(), Meta::default()));
         let num_batches = 100;
         let mut batches = vec![batch; num_batches];
         let max = 5;

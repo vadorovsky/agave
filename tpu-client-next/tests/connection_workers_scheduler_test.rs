@@ -11,7 +11,7 @@ use {
         nonblocking::testing_utilities::{
             make_client_endpoint, setup_quic_server, SpawnTestServerResult, TestServerConfig,
         },
-        packet::PacketBatch,
+        packet::PinnedPacketBatch,
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
@@ -245,7 +245,7 @@ async fn test_basic_transactions_sending() {
 }
 
 async fn count_received_packets_for(
-    receiver: CrossbeamReceiver<PacketBatch>,
+    receiver: CrossbeamReceiver<PinnedPacketBatch>,
     expected_tx_size: usize,
     receive_duration: Duration,
 ) -> usize {

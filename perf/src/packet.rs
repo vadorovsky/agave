@@ -3,7 +3,11 @@ pub use solana_packet::{self, Meta, Packet, PacketFlags, PACKET_DATA_SIZE};
 use {
     crate::{cuda_runtime::PinnedVec, recycler::Recycler},
     bincode::config::Options,
-    rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
+    bytes::{BufMut, Bytes, BytesMut},
+    rayon::{
+        iter::{IndexedParallelIterator, ParallelIterator},
+        prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
+    },
     serde::{de::DeserializeOwned, Deserialize, Serialize},
     std::{
         borrow::Borrow,
@@ -19,15 +23,459 @@ pub const NUM_PACKETS: usize = 1024 * 8;
 pub const PACKETS_PER_BATCH: usize = 64;
 pub const NUM_RCVMMSGS: usize = 64;
 
+/// Read data and metadata from a packet.
+pub trait PacketRead {
+    fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>;
+    fn meta(&self) -> &Meta;
+    fn size(&self) -> usize;
+
+    fn deserialize_slice<T, I>(&self, index: I) -> bincode::Result<T>
+    where
+        T: serde::de::DeserializeOwned,
+        I: SliceIndex<[u8], Output = [u8]>,
+    {
+        let bytes = self.data(index).ok_or(bincode::ErrorKind::SizeLimit)?;
+        bincode::options()
+            .with_limit(PACKET_DATA_SIZE as u64)
+            .with_fixint_encoding()
+            .reject_trailing_bytes()
+            .deserialize(bytes)
+    }
+}
+
+pub trait PacketMut {
+    fn meta_mut(&mut self) -> &mut Meta;
+}
+
+impl PacketRead for Packet {
+    fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>,
+    {
+        self.data(index)
+    }
+
+    #[inline]
+    fn meta(&self) -> &Meta {
+        self.meta()
+    }
+
+    #[inline]
+    fn size(&self) -> usize {
+        self.meta().size
+    }
+}
+
+impl PacketMut for Packet {
+    #[inline]
+    fn meta_mut(&mut self) -> &mut Meta {
+        self.meta_mut()
+    }
+}
+
+/// Representation of a packet used in TPU.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BytesPacket {
+    buffer: Bytes,
+    meta: Meta,
+}
+
+impl BytesPacket {
+    pub fn new(buffer: Bytes, meta: Meta) -> Self {
+        Self { buffer, meta }
+    }
+
+    pub fn from_data<T>(dest: Option<&SocketAddr>, data: T) -> bincode::Result<Self>
+    where
+        T: solana_packet::Encode,
+    {
+        let buffer = BytesMut::with_capacity(PACKET_DATA_SIZE);
+        let mut writer = buffer.writer();
+        data.encode(&mut writer)?;
+        let buffer = writer.into_inner();
+        let buffer = buffer.freeze();
+
+        let mut meta = Meta::default();
+        // We don't use the `size` field of `Meta` in `TpuPacket`/`TpuPacketMut`.
+        // Instead, we rely on the length of the buffers. There is no need for
+        // tracking the size manually.
+        // However, removing the `size` field from `Meta` would break ABI and the
+        // `Packet` struct. Maintaining multiple `Meta` implementations would add
+        // more maintenance burden.
+        meta.size = usize::MAX;
+        if let Some(dest) = dest {
+            meta.set_socket_addr(dest);
+        }
+
+        Ok(Self { buffer, meta })
+    }
+}
+
+impl PacketRead for BytesPacket {
+    fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>,
+    {
+        if self.meta.discard() {
+            None
+        } else {
+            self.buffer.get(index)
+        }
+    }
+
+    #[inline]
+    fn meta(&self) -> &Meta {
+        &self.meta
+    }
+
+    #[inline]
+    fn size(&self) -> usize {
+        self.buffer.len()
+    }
+}
+
+impl PacketMut for BytesPacket {
+    #[inline]
+    fn meta_mut(&mut self) -> &mut Meta {
+        &mut self.meta
+    }
+}
+
+#[derive(Clone)]
+pub enum PacketBatch {
+    Pinned(PinnedPacketBatch),
+    Bytes(BytesPacketBatch),
+}
+
+impl PacketBatch {
+    pub fn get(&self, index: usize) -> Option<PacketRef<'_>> {
+        match self {
+            Self::Pinned(batch) => batch.get(index).map(PacketRef::from),
+            Self::Bytes(batch) => batch.get(index).map(PacketRef::from),
+        }
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> Option<PacketRefMut<'_>> {
+        match self {
+            Self::Pinned(batch) => batch.get_mut(index).map(PacketRefMut::from),
+            Self::Bytes(batch) => batch.get_mut(index).map(PacketRefMut::from),
+        }
+    }
+
+    pub fn iter(&self) -> PacketBatchIter<'_> {
+        match self {
+            Self::Pinned(batch) => PacketBatchIter::Pinned(batch.iter()),
+            Self::Bytes(batch) => PacketBatchIter::Bytes(batch.iter()),
+        }
+    }
+
+    pub fn iter_mut(&mut self) -> PacketBatchIterMut<'_> {
+        match self {
+            Self::Pinned(batch) => PacketBatchIterMut::Pinned(batch.iter_mut()),
+            Self::Bytes(batch) => PacketBatchIterMut::Bytes(batch.iter_mut()),
+        }
+    }
+
+    pub fn par_iter(&self) -> PacketBatchParIter {
+        match self {
+            Self::Pinned(batch) => {
+                PacketBatchParIter::Pinned(batch.par_iter().map(PacketRef::from))
+            }
+            Self::Bytes(batch) => PacketBatchParIter::Bytes(batch.par_iter().map(PacketRef::from)),
+        }
+    }
+
+    pub fn par_iter_mut(&mut self) -> PacketBatchParIterMut {
+        match self {
+            Self::Pinned(batch) => {
+                PacketBatchParIterMut::Pinned(batch.par_iter_mut().map(PacketRefMut::from))
+            }
+            Self::Bytes(batch) => {
+                PacketBatchParIterMut::Bytes(batch.par_iter_mut().map(PacketRefMut::from))
+            }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Pinned(batch) => batch.len(),
+            Self::Bytes(batch) => batch.len(),
+        }
+    }
+}
+
+impl<'a> IntoParallelIterator for &'a PacketBatch {
+    type Iter = PacketBatchParIter<'a>;
+    type Item = PacketRef<'a>;
+    fn into_par_iter(self) -> Self::Iter {
+        self.par_iter()
+    }
+}
+
+impl<'a> IntoParallelIterator for &'a mut PacketBatch {
+    type Iter = PacketBatchParIterMut<'a>;
+    type Item = PacketRefMut<'a>;
+    fn into_par_iter(self) -> Self::Iter {
+        self.par_iter_mut()
+    }
+}
+
+pub enum PacketRef<'a> {
+    Packet(&'a Packet),
+    Bytes(&'a BytesPacket),
+}
+
+impl<'a> From<&'a Packet> for PacketRef<'a> {
+    fn from(packet: &'a Packet) -> Self {
+        Self::Packet(packet)
+    }
+}
+
+impl<'a> From<&'a BytesPacket> for PacketRef<'a> {
+    fn from(packet: &'a BytesPacket) -> Self {
+        Self::Bytes(packet)
+    }
+}
+
+impl<'a> PacketRead for PacketRef<'a> {
+    fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>,
+    {
+        match self {
+            Self::Packet(packet) => packet.data(index),
+            Self::Bytes(packet) => packet.data(index),
+        }
+    }
+
+    #[inline]
+    fn meta(&self) -> &Meta {
+        match self {
+            Self::Packet(packet) => packet.meta(),
+            Self::Bytes(packet) => packet.meta(),
+        }
+    }
+
+    #[inline]
+    fn size(&self) -> usize {
+        match self {
+            Self::Packet(packet) => packet.meta().size,
+            Self::Bytes(packet) => packet.size(),
+        }
+    }
+}
+pub enum PacketRefMut<'a> {
+    Packet(&'a mut Packet),
+    Bytes(&'a mut BytesPacket),
+}
+
+impl<'a> From<&'a mut Packet> for PacketRefMut<'a> {
+    fn from(packet: &'a mut Packet) -> Self {
+        Self::Packet(packet)
+    }
+}
+
+impl<'a> From<&'a mut BytesPacket> for PacketRefMut<'a> {
+    fn from(packet: &'a mut BytesPacket) -> Self {
+        Self::Bytes(packet)
+    }
+}
+
+impl<'a> PacketRead for PacketRefMut<'a> {
+    fn data<I>(&self, index: I) -> Option<&<I as SliceIndex<[u8]>>::Output>
+    where
+        I: SliceIndex<[u8]>,
+    {
+        match self {
+            Self::Packet(packet) => packet.data(index),
+            Self::Bytes(packet) => packet.data(index),
+        }
+    }
+
+    #[inline]
+    fn meta(&self) -> &Meta {
+        match self {
+            Self::Packet(packet) => packet.meta(),
+            Self::Bytes(packet) => packet.meta(),
+        }
+    }
+
+    #[inline]
+    fn size(&self) -> usize {
+        match self {
+            Self::Packet(packet) => packet.meta().size,
+            Self::Bytes(packet) => packet.size(),
+        }
+    }
+}
+
+impl<'a> PacketMut for PacketRefMut<'a> {
+    #[inline]
+    fn meta_mut(&mut self) -> &mut Meta {
+        match self {
+            Self::Packet(packet) => packet.meta_mut(),
+            Self::Bytes(packet) => packet.meta_mut(),
+        }
+    }
+}
+
+pub enum PacketBatchIter<'a> {
+    Pinned(std::slice::Iter<'a, Packet>),
+    Bytes(std::slice::Iter<'a, BytesPacket>),
+}
+
+impl<'a> Iterator for PacketBatchIter<'a> {
+    type Item = PacketRef<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Pinned(iter) => iter.next().map(PacketRef::Packet),
+            Self::Bytes(iter) => iter.next().map(PacketRef::Bytes),
+        }
+    }
+}
+
+pub enum PacketBatchIterMut<'a> {
+    Pinned(std::slice::IterMut<'a, Packet>),
+    Bytes(std::slice::IterMut<'a, BytesPacket>),
+}
+
+impl<'a> Iterator for PacketBatchIterMut<'a> {
+    type Item = PacketRefMut<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Pinned(iter) => iter.next().map(PacketRefMut::Packet),
+            Self::Bytes(iter) => iter.next().map(PacketRefMut::Bytes),
+        }
+    }
+}
+
+type PacketParIter<'a> = rayon::slice::Iter<'a, Packet>;
+type BytesPacketParIter<'a> = rayon::slice::Iter<'a, BytesPacket>;
+
+pub enum PacketBatchParIter<'a> {
+    Pinned(
+        rayon::iter::Map<
+            PacketParIter<'a>,
+            fn(<PacketParIter<'a> as ParallelIterator>::Item) -> PacketRef<'a>,
+        >,
+    ),
+    Bytes(
+        rayon::iter::Map<
+            BytesPacketParIter<'a>,
+            fn(<BytesPacketParIter<'a> as ParallelIterator>::Item) -> PacketRef<'a>,
+        >,
+    ),
+}
+
+impl<'a> ParallelIterator for PacketBatchParIter<'a> {
+    type Item = PacketRef<'a>;
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+    where
+        C: rayon::iter::plumbing::UnindexedConsumer<Self::Item>,
+    {
+        match self {
+            Self::Pinned(iter) => iter.drive_unindexed(consumer),
+            Self::Bytes(iter) => iter.drive_unindexed(consumer),
+        }
+    }
+}
+
+impl<'a> IndexedParallelIterator for PacketBatchParIter<'a> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Pinned(iter) => iter.len(),
+            Self::Bytes(iter) => iter.len(),
+        }
+    }
+
+    fn drive<C: rayon::iter::plumbing::Consumer<Self::Item>>(self, consumer: C) -> C::Result {
+        match self {
+            Self::Pinned(iter) => iter.drive(consumer),
+            Self::Bytes(iter) => iter.drive(consumer),
+        }
+    }
+
+    fn with_producer<CB: rayon::iter::plumbing::ProducerCallback<Self::Item>>(
+        self,
+        callback: CB,
+    ) -> CB::Output {
+        match self {
+            Self::Pinned(iter) => iter.with_producer(callback),
+            Self::Bytes(iter) => iter.with_producer(callback),
+        }
+    }
+}
+
+type PacketParIterMut<'a> = rayon::slice::IterMut<'a, Packet>;
+type BytesPacketParIterMut<'a> = rayon::slice::IterMut<'a, BytesPacket>;
+
+pub enum PacketBatchParIterMut<'a> {
+    Pinned(
+        rayon::iter::Map<
+            PacketParIterMut<'a>,
+            fn(<PacketParIterMut<'a> as ParallelIterator>::Item) -> PacketRefMut<'a>,
+        >,
+    ),
+    Bytes(
+        rayon::iter::Map<
+            BytesPacketParIterMut<'a>,
+            fn(<BytesPacketParIterMut<'a> as ParallelIterator>::Item) -> PacketRefMut<'a>,
+        >,
+    ),
+}
+
+impl<'a> ParallelIterator for PacketBatchParIterMut<'a> {
+    type Item = PacketRefMut<'a>;
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+    where
+        C: rayon::iter::plumbing::UnindexedConsumer<Self::Item>,
+    {
+        match self {
+            Self::Pinned(iter) => iter.drive_unindexed(consumer),
+            Self::Bytes(iter) => iter.drive_unindexed(consumer),
+        }
+    }
+}
+
+impl<'a> IndexedParallelIterator for PacketBatchParIterMut<'a> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Pinned(iter) => iter.len(),
+            Self::Bytes(iter) => iter.len(),
+        }
+    }
+
+    fn drive<C: rayon::iter::plumbing::Consumer<Self::Item>>(self, consumer: C) -> C::Result {
+        match self {
+            Self::Pinned(iter) => iter.drive(consumer),
+            Self::Bytes(iter) => iter.drive(consumer),
+        }
+    }
+
+    fn with_producer<CB: rayon::iter::plumbing::ProducerCallback<Self::Item>>(
+        self,
+        callback: CB,
+    ) -> CB::Output {
+        match self {
+            Self::Pinned(iter) => iter.with_producer(callback),
+            Self::Bytes(iter) => iter.with_producer(callback),
+        }
+    }
+}
+
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct PacketBatch {
+pub struct PinnedPacketBatch {
     packets: PinnedVec<Packet>,
 }
 
 pub type PacketBatchRecycler = Recycler<PinnedVec<Packet>>;
 
-impl PacketBatch {
+impl PinnedPacketBatch {
     pub fn new(packets: Vec<Packet>) -> Self {
         let packets = PinnedVec::from_vec(packets);
         Self { packets }
@@ -39,9 +487,9 @@ impl PacketBatch {
     }
 
     pub fn new_pinned_with_capacity(capacity: usize) -> Self {
-        let mut batch = Self::with_capacity(capacity);
-        batch.packets.reserve_and_pin(capacity);
-        batch
+        let mut packets = PinnedVec::with_capacity(capacity);
+        packets.reserve_and_pin(capacity);
+        Self { packets }
     }
 
     pub fn new_unpinned_with_recycler(
@@ -85,23 +533,25 @@ impl PacketBatch {
     {
         let dests_and_data = dests_and_data.into_iter();
         let mut batch = Self::new_unpinned_with_recycler(recycler, dests_and_data.len(), name);
-        batch
-            .packets
-            .resize(dests_and_data.len(), Packet::default());
 
-        for ((addr, data), packet) in dests_and_data.zip(batch.packets.iter_mut()) {
+        for (addr, data) in dests_and_data {
             let addr = addr.borrow();
             if !addr.ip().is_unspecified() && addr.port() != 0 {
-                if let Err(e) = Packet::populate_packet(packet, Some(addr), &data) {
-                    // TODO: This should never happen. Instead the caller should
-                    // break the payload into smaller messages, and here any errors
-                    // should be propagated.
-                    error!("Couldn't write to packet {:?}. Data skipped.", e);
-                    packet.meta_mut().set_discard(true);
-                }
+                let packet = match Packet::from_data(Some(addr), data) {
+                    Ok(packet) => packet,
+                    Err(e) => {
+                        error!("Couldn't write to packet {:?}. Data skipped.", e);
+                        let mut packet = Packet::default();
+                        packet.meta_mut().set_discard(true);
+                        packet
+                    }
+                };
+                batch.push(packet);
             } else {
                 trace!("Dropping packet, as destination is unknown");
+                let mut packet = Packet::default();
                 packet.meta_mut().set_discard(true);
+                batch.push(packet);
             }
         }
         batch
@@ -124,7 +574,7 @@ impl PacketBatch {
     }
 }
 
-impl Deref for PacketBatch {
+impl Deref for PinnedPacketBatch {
     type Target = PinnedVec<Packet>;
 
     fn deref(&self) -> &Self::Target {
@@ -132,29 +582,29 @@ impl Deref for PacketBatch {
     }
 }
 
-impl DerefMut for PacketBatch {
+impl DerefMut for PinnedPacketBatch {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.packets
     }
 }
 
-impl<I: SliceIndex<[Packet]>> Index<I> for PacketBatch {
-    type Output = I::Output;
+impl Index<usize> for PinnedPacketBatch {
+    type Output = Packet;
 
     #[inline]
-    fn index(&self, index: I) -> &Self::Output {
+    fn index(&self, index: usize) -> &Self::Output {
         &self.packets[index]
     }
 }
 
-impl<I: SliceIndex<[Packet]>> IndexMut<I> for PacketBatch {
+impl IndexMut<usize> for PinnedPacketBatch {
     #[inline]
-    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.packets[index]
     }
 }
 
-impl<'a> IntoIterator for &'a PacketBatch {
+impl<'a> IntoIterator for &'a PinnedPacketBatch {
     type Item = &'a Packet;
     type IntoIter = Iter<'a, Packet>;
 
@@ -163,7 +613,7 @@ impl<'a> IntoIterator for &'a PacketBatch {
     }
 }
 
-impl<'a> IntoParallelIterator for &'a PacketBatch {
+impl<'a> IntoParallelIterator for &'a PinnedPacketBatch {
     type Iter = rayon::slice::Iter<'a, Packet>;
     type Item = &'a Packet;
     fn into_par_iter(self) -> Self::Iter {
@@ -171,7 +621,7 @@ impl<'a> IntoParallelIterator for &'a PacketBatch {
     }
 }
 
-impl<'a> IntoParallelIterator for &'a mut PacketBatch {
+impl<'a> IntoParallelIterator for &'a mut PinnedPacketBatch {
     type Iter = rayon::slice::IterMut<'a, Packet>;
     type Item = &'a mut Packet;
     fn into_par_iter(self) -> Self::Iter {
@@ -179,20 +629,20 @@ impl<'a> IntoParallelIterator for &'a mut PacketBatch {
     }
 }
 
-impl From<PacketBatch> for Vec<Packet> {
-    fn from(batch: PacketBatch) -> Self {
+impl From<PinnedPacketBatch> for Vec<Packet> {
+    fn from(batch: PinnedPacketBatch) -> Self {
         batch.packets.into()
     }
 }
 
-pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<PacketBatch> {
+pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<PinnedPacketBatch> {
     items
         .chunks(chunk_size)
         .map(|batch_items| {
-            let mut batch = PacketBatch::with_capacity(batch_items.len());
-            batch.resize(batch_items.len(), Packet::default());
-            for (item, packet) in batch_items.iter().zip(batch.packets.iter_mut()) {
-                Packet::populate_packet(packet, None, item).expect("serialize request");
+            let mut batch = PinnedPacketBatch::with_capacity(batch_items.len());
+            for item in batch_items.iter() {
+                let packet = Packet::from_data(None, item).expect("serialize request");
+                batch.push(packet);
             }
             batch
         })
@@ -200,8 +650,85 @@ pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<Pa
 }
 
 #[cfg(test)]
-fn to_packet_batches_for_tests<T: Serialize>(items: &[T]) -> Vec<PacketBatch> {
+fn to_packet_batches_for_tests<T: Serialize>(items: &[T]) -> Vec<PinnedPacketBatch> {
     to_packet_batches(items, NUM_PACKETS)
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct BytesPacketBatch {
+    packets: Vec<BytesPacket>,
+}
+
+impl BytesPacketBatch {
+    pub fn new() -> PacketBatch {
+        PacketBatch::Bytes(Self::default())
+    }
+
+    pub fn with_capacity(capacity: usize) -> PacketBatch {
+        let packets = Vec::with_capacity(capacity);
+        PacketBatch::Bytes(Self { packets })
+    }
+
+    pub fn to_pinned_packet_batch(&self) -> PinnedPacketBatch {
+        let mut batch = PinnedPacketBatch::with_capacity(self.len());
+        for bytes_packet in self.iter() {
+            let mut packet = Packet::default();
+            let size = bytes_packet.size();
+            *packet.meta_mut() = bytes_packet.meta().clone();
+            packet.meta_mut().size = size;
+            packet.buffer_mut()[..size].copy_from_slice(&bytes_packet.buffer);
+
+            batch.push(packet);
+        }
+
+        batch
+    }
+}
+
+impl Deref for BytesPacketBatch {
+    type Target = Vec<BytesPacket>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.packets
+    }
+}
+
+impl DerefMut for BytesPacketBatch {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.packets
+    }
+}
+
+impl FromIterator<BytesPacket> for BytesPacketBatch {
+    fn from_iter<T: IntoIterator<Item = BytesPacket>>(iter: T) -> Self {
+        let packets = Vec::from_iter(iter);
+        Self { packets }
+    }
+}
+
+impl<'a> IntoIterator for &'a BytesPacketBatch {
+    type Item = &'a BytesPacket;
+    type IntoIter = Iter<'a, BytesPacket>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.packets.iter()
+    }
+}
+
+impl<'a> IntoParallelIterator for &'a BytesPacketBatch {
+    type Iter = rayon::slice::Iter<'a, BytesPacket>;
+    type Item = &'a BytesPacket;
+    fn into_par_iter(self) -> Self::Iter {
+        self.packets.par_iter()
+    }
+}
+
+impl<'a> IntoParallelIterator for &'a mut BytesPacketBatch {
+    type Iter = rayon::slice::IterMut<'a, BytesPacket>;
+    type Item = &'a mut BytesPacket;
+    fn into_par_iter(self) -> Self::Iter {
+        self.packets.par_iter_mut()
+    }
 }
 
 pub fn deserialize_from_with_limit<R, T>(reader: R) -> bincode::Result<T>
@@ -250,7 +777,8 @@ mod tests {
     fn test_to_packets_pinning() {
         let recycler = PacketBatchRecycler::default();
         for i in 0..2 {
-            let _first_packets = PacketBatch::new_with_recycler(&recycler, i + 1, "first one");
+            let _first_packets =
+                PinnedPacketBatch::new_with_recycler(&recycler, i + 1, "first one");
         }
     }
 }

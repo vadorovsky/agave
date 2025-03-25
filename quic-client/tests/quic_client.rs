@@ -7,7 +7,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_net_utils::bind_to_localhost,
         solana_packet::PACKET_DATA_SIZE,
-        solana_perf::packet::PacketBatch,
+        solana_perf::packet::PinnedPacketBatch,
         solana_quic_client::nonblocking::quic_client::QuicLazyInitializedEndpoint,
         solana_streamer::{
             quic::{QuicServerParams, SpawnServerResult},
@@ -26,7 +26,7 @@ mod tests {
     };
 
     fn check_packets(
-        receiver: Receiver<PacketBatch>,
+        receiver: Receiver<PinnedPacketBatch>,
         num_bytes: usize,
         num_expected_packets: usize,
     ) {
@@ -118,7 +118,7 @@ mod tests {
     // that don't immediately manifest, but only show up when a separate
     // change (often itself valid) is made
     async fn nonblocking_check_packets(
-        receiver: Receiver<PacketBatch>,
+        receiver: Receiver<PinnedPacketBatch>,
         num_bytes: usize,
         num_expected_packets: usize,
     ) {

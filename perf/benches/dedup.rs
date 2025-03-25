@@ -7,7 +7,7 @@ use {
     rand::prelude::*,
     solana_perf::{
         deduper::{self, Deduper},
-        packet::{to_packet_batches, PacketBatch},
+        packet::{to_packet_batches, PacketBatch, PacketRead},
     },
     std::time::Duration,
     test::Bencher,
