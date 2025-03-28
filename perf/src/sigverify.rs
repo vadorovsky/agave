@@ -458,17 +458,29 @@ pub fn shrink_batches(batches: &mut Vec<PacketBatch>) {
     let mut last_valid_batch = 0;
     for batch_ix in 0..batches.len() {
         for packet_ix in 0..batches[batch_ix].len() {
-            if batches[batch_ix][packet_ix].meta().discard() {
+            if batches[batch_ix].get(packet_ix).unwrap().meta().discard() {
                 continue;
             }
             last_valid_batch = batch_ix.saturating_add(1);
             let mut found_spot = false;
             while valid_batch_ix < batch_ix && !found_spot {
-                while valid_packet_ix < batches[valid_batch_ix].len() {
-                    if batches[valid_batch_ix][valid_packet_ix].meta().discard() {
-                        batches[valid_batch_ix][valid_packet_ix] =
-                            batches[batch_ix][packet_ix].clone();
-                        batches[batch_ix][packet_ix].meta_mut().set_discard(true);
+                let (left, right) = batches.split_at_mut(batch_ix);
+                while valid_packet_ix < left[valid_batch_ix].len() {
+                    if left[valid_batch_ix]
+                        .get(valid_packet_ix)
+                        .unwrap()
+                        .meta()
+                        .discard()
+                    {
+                        left[valid_batch_ix]
+                            .get_mut(valid_packet_ix)
+                            .unwrap()
+                            .copy_from(right[0].get(packet_ix).unwrap());
+                        right[0]
+                            .get_mut(packet_ix)
+                            .unwrap()
+                            .meta_mut()
+                            .set_discard(true);
                         last_valid_batch = valid_batch_ix.saturating_add(1);
                         found_spot = true;
                         break;
@@ -721,13 +733,13 @@ mod tests {
     fn test_mark_disabled() {
         let batch_size = 1;
         let mut batch = BytesPacketBatch::with_capacity(batch_size);
-        batch.resize(batch_size, Packet::Bytes(BytesPacket::default()));
-        let mut batches: Vec<PacketBatch> = vec![batch];
+        batch.resize(batch_size, BytesPacket::default());
+        let mut batches: Vec<PacketBatch> = vec![batch.into()];
         mark_disabled(&mut batches, &[vec![0]]);
-        assert!(batches[0][0].meta().discard());
-        batches[0][0].meta_mut().set_discard(false);
+        assert!(batches[0].get(0).unwrap().meta().discard());
+        batches[0].get_mut(0).unwrap().meta_mut().set_discard(false);
         mark_disabled(&mut batches, &[vec![1]]);
-        assert!(!batches[0][0].meta().discard());
+        assert!(!batches[0].get(0).unwrap().meta().discard());
     }
 
     #[test]
@@ -767,7 +779,7 @@ mod tests {
         assert_eq!(packet_offsets.sig_len, 1);
     }
 
-    fn packet_from_num_sigs(required_num_sigs: u8, actual_num_sigs: usize) -> Packet {
+    fn packet_from_num_sigs(required_num_sigs: u8, actual_num_sigs: usize) -> BytesPacket {
         let message = Message {
             header: MessageHeader {
                 num_required_signatures: required_num_sigs,
@@ -830,7 +842,7 @@ mod tests {
         packet.meta_mut().set_discard(false);
         let mut batches = generate_packet_batches(&packet, 1, 1);
         ed25519_verify(&mut batches);
-        assert!(batches[0][0].meta().discard());
+        assert!(batches[0].get(0).unwrap().meta().discard());
     }
 
     #[test]

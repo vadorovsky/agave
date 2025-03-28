@@ -46,6 +46,7 @@ pub trait PacketRead {
 }
 
 pub trait PacketMut {
+    fn copy_from<P: PacketRead>(&mut self, packet: P);
     fn meta_mut(&mut self) -> &mut Meta;
 }
 
@@ -69,6 +70,15 @@ impl PacketRead for Packet {
 }
 
 impl PacketMut for Packet {
+    fn copy_from<P: PacketRead>(&mut self, packet: P) {
+        let size = packet.size();
+        if let Some(data) = packet.data(..) {
+            self.buffer_mut()[..size].copy_from_slice(data);
+        }
+        *self.meta_mut() = packet.meta().clone();
+        self.meta_mut().size = size;
+    }
+
     #[inline]
     fn meta_mut(&mut self) -> &mut Meta {
         self.meta_mut()
@@ -98,12 +108,12 @@ impl BytesPacket {
         let buffer = buffer.freeze();
 
         let mut meta = Meta::default();
-        // We don't use the `size` field of `Meta` in `TpuPacket`/`TpuPacketMut`.
+        // We don't use the `size` field of `Meta`here.
         // Instead, we rely on the length of the buffers. There is no need for
         // tracking the size manually.
         // However, removing the `size` field from `Meta` would break ABI and the
         // `Packet` struct. Maintaining multiple `Meta` implementations would add
-        // more maintenance burden.
+        // more maintenance burden. So let's just set it to MAX.
         meta.size = usize::MAX;
         if let Some(dest) = dest {
             meta.set_socket_addr(dest);
@@ -137,6 +147,15 @@ impl PacketRead for BytesPacket {
 }
 
 impl PacketMut for BytesPacket {
+    fn copy_from<P: PacketRead>(&mut self, packet: P) {
+        self.buffer = match packet.data(..) {
+            Some(data) => Bytes::from(data.to_vec()),
+            None => Bytes::new(),
+        };
+        *self.meta_mut() = packet.meta().clone();
+        self.meta_mut().size = usize::MAX;
+    }
+
     #[inline]
     fn meta_mut(&mut self) -> &mut Meta {
         &mut self.meta
@@ -203,6 +222,18 @@ impl PacketBatch {
             Self::Pinned(batch) => batch.len(),
             Self::Bytes(batch) => batch.len(),
         }
+    }
+}
+
+impl From<PinnedPacketBatch> for PacketBatch {
+    fn from(batch: PinnedPacketBatch) -> Self {
+        Self::Pinned(batch)
+    }
+}
+
+impl From<BytesPacketBatch> for PacketBatch {
+    fn from(batch: BytesPacketBatch) -> Self {
+        Self::Bytes(batch)
     }
 }
 
@@ -312,6 +343,14 @@ impl<'a> PacketRead for PacketRefMut<'a> {
 }
 
 impl<'a> PacketMut for PacketRefMut<'a> {
+    #[inline]
+    fn copy_from<P: PacketRead>(&mut self, other: P) {
+        match self {
+            Self::Packet(packet) => packet.copy_from(other),
+            Self::Bytes(packet) => packet.copy_from(other),
+        }
+    }
+
     #[inline]
     fn meta_mut(&mut self) -> &mut Meta {
         match self {
@@ -660,13 +699,13 @@ pub struct BytesPacketBatch {
 }
 
 impl BytesPacketBatch {
-    pub fn new() -> PacketBatch {
-        PacketBatch::Bytes(Self::default())
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub fn with_capacity(capacity: usize) -> PacketBatch {
+    pub fn with_capacity(capacity: usize) -> Self {
         let packets = Vec::with_capacity(capacity);
-        PacketBatch::Bytes(Self { packets })
+        Self { packets }
     }
 
     pub fn to_pinned_packet_batch(&self) -> PinnedPacketBatch {
