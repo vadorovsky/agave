@@ -86,7 +86,7 @@ impl PacketMut for Packet {
 }
 
 /// Representation of a packet used in TPU.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, Serialize, Deserialize)]
 pub struct BytesPacket {
     buffer: Bytes,
     meta: Meta,
@@ -162,6 +162,15 @@ impl PacketMut for BytesPacket {
     }
 }
 
+impl<P> PartialEq<P> for BytesPacket
+where
+    P: PacketRead,
+{
+    fn eq(&self, other: &P) -> bool {
+        self.data(..).eq(&other.data(..)) && self.meta().eq(&other.meta())
+    }
+}
+
 #[derive(Clone)]
 pub enum PacketBatch {
     Pinned(PinnedPacketBatch),
@@ -217,6 +226,13 @@ impl PacketBatch {
         }
     }
 
+    // pub fn push(&mut self, packet: Packet) {
+    //     match self {
+    //         Self::Pinned(batch) => batch.push(packet),
+    //         Self::Bytes(batch) => batch.push(packet),
+    //     }
+    // }
+
     pub fn len(&self) -> usize {
         match self {
             Self::Pinned(batch) => batch.len(),
@@ -253,9 +269,19 @@ impl<'a> IntoParallelIterator for &'a mut PacketBatch {
     }
 }
 
+#[derive(Debug, Eq)]
 pub enum PacketRef<'a> {
     Packet(&'a Packet),
     Bytes(&'a BytesPacket),
+}
+
+impl<'a, P> PartialEq<P> for PacketRef<'a>
+where
+    P: PacketRead,
+{
+    fn eq(&self, other: &P) -> bool {
+        self.data(..).eq(&other.data(..)) && self.meta().eq(other.meta())
+    }
 }
 
 impl<'a> From<&'a Packet> for PacketRef<'a> {
@@ -297,9 +323,20 @@ impl<'a> PacketRead for PacketRef<'a> {
         }
     }
 }
+
+#[derive(Debug, Eq)]
 pub enum PacketRefMut<'a> {
     Packet(&'a mut Packet),
     Bytes(&'a mut BytesPacket),
+}
+
+impl<'a, P> PartialEq<P> for PacketRefMut<'a>
+where
+    P: PacketRead,
+{
+    fn eq(&self, other: &P) -> bool {
+        self.data(..).eq(&other.data(..)) && self.meta().eq(other.meta())
+    }
 }
 
 impl<'a> From<&'a mut Packet> for PacketRefMut<'a> {
@@ -674,13 +711,13 @@ impl From<PinnedPacketBatch> for Vec<Packet> {
     }
 }
 
-pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<PinnedPacketBatch> {
+pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<BytesPacketBatch> {
     items
         .chunks(chunk_size)
         .map(|batch_items| {
-            let mut batch = PinnedPacketBatch::with_capacity(batch_items.len());
+            let mut batch = BytesPacketBatch::with_capacity(batch_items.len());
             for item in batch_items.iter() {
-                let packet = Packet::from_data(None, item).expect("serialize request");
+                let packet = BytesPacket::from_data(None, item).expect("serialize request");
                 batch.push(packet);
             }
             batch
@@ -689,7 +726,7 @@ pub fn to_packet_batches<T: Serialize>(items: &[T], chunk_size: usize) -> Vec<Pi
 }
 
 #[cfg(test)]
-fn to_packet_batches_for_tests<T: Serialize>(items: &[T]) -> Vec<PinnedPacketBatch> {
+fn to_packet_batches_for_tests<T: Serialize>(items: &[T]) -> Vec<BytesPacketBatch> {
     to_packet_batches(items, NUM_PACKETS)
 }
 

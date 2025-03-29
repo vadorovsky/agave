@@ -876,7 +876,7 @@ mod tests {
         packet.meta_mut().set_discard(false);
         let mut batches = generate_packet_batches(&packet, 1, 1);
         ed25519_verify(&mut batches);
-        assert!(batches[0][0].meta().discard());
+        assert!(batches[0].get(0).unwrap().meta().discard());
     }
 
     #[test]
@@ -1068,19 +1068,19 @@ mod tests {
     }
 
     fn generate_packet_batches(
-        packet: &Packet,
+        packet: &BytesPacket,
         num_packets_per_batch: usize,
         num_batches: usize,
     ) -> Vec<PacketBatch> {
         // generate packet vector
-        let batches: Vec<_> = (0..num_batches)
+        let batches: Vec<PacketBatch> = (0..num_batches)
             .map(|_| {
                 let mut packet_batch = BytesPacketBatch::with_capacity(num_packets_per_batch);
                 for _ in 0..num_packets_per_batch {
                     packet_batch.push(packet.clone());
                 }
                 assert_eq!(packet_batch.len(), num_packets_per_batch);
-                packet_batch
+                packet_batch.into()
             })
             .collect();
         assert_eq!(batches.len(), num_batches);
@@ -1228,7 +1228,7 @@ mod tests {
                 batches[batch][packet][offset] = batches[batch][packet][offset].wrapping_add(add);
             }
 
-            let mut batches: Vec<_> = batches
+            let mut batches: Vec<PacketBatch> = batches
                 .iter()
                 .map(|batch| {
                     let mut packet_batch = BytesPacketBatch::with_capacity(batch.len());
@@ -1236,12 +1236,12 @@ mod tests {
                         let packet = BytesPacket::new(Bytes::from(data.clone()), Meta::default());
                         packet_batch.push(packet);
                     }
-                    packet_batch
+                    packet_batch.into()
                 })
                 .collect();
 
             let batch_to_disable = thread_rng().gen_range(0..batches.len());
-            for p in batches[batch_to_disable].iter_mut() {
+            for mut p in batches[batch_to_disable].iter_mut() {
                 p.meta_mut().set_discard(true);
             }
 
@@ -1491,7 +1491,7 @@ mod tests {
             );
             batches.iter_mut().for_each(|b| {
                 b.iter_mut()
-                    .for_each(|p| p.meta_mut().set_discard(thread_rng().gen()))
+                    .for_each(|mut p| p.meta_mut().set_discard(thread_rng().gen()))
             });
             //find all the non discarded packets
             let mut start = vec![];
@@ -1501,6 +1501,7 @@ mod tests {
                     .for_each(|p| start.push(p.clone()))
             });
             start.sort_by(|a, b| a.data(..).cmp(&b.data(..)));
+            let mut batches: Vec<_> = batches.into_iter().map(PacketBatch::from).collect();
 
             let packet_count = count_valid_packets(&batches);
             shrink_batches(&mut batches);
@@ -1529,14 +1530,14 @@ mod tests {
         shrink_batches(&mut Vec::new());
         // One empty batch
         {
-            let mut batches = vec![PinnedPacketBatch::with_capacity(0)];
+            let mut batches = vec![PinnedPacketBatch::with_capacity(0).into()];
             shrink_batches(&mut batches);
             assert_eq!(batches.len(), 0);
         }
         // Many empty batches
         {
             let mut batches = (0..BATCH_COUNT)
-                .map(|_| PinnedPacketBatch::with_capacity(0))
+                .map(|_| PinnedPacketBatch::with_capacity(0).into())
                 .collect::<Vec<_>>();
             shrink_batches(&mut batches);
             assert_eq!(batches.len(), 0);
@@ -1681,7 +1682,7 @@ mod tests {
             batches.iter_mut().enumerate().for_each(|(i, b)| {
                 b.iter_mut()
                     .enumerate()
-                    .for_each(|(j, p)| p.meta_mut().set_discard(set_discard(i, j)))
+                    .for_each(|(j, mut p)| p.meta_mut().set_discard(set_discard(i, j)))
             });
             assert_eq!(count_valid_packets(&batches), *expect_valid_packets);
             debug!("show valid packets for case {}", i);
