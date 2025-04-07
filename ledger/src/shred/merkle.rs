@@ -18,6 +18,7 @@ use {
         shredder::{self, ReedSolomonCache},
     },
     assert_matches::debug_assert_matches,
+    bytes::Bytes,
     itertools::{Either, Itertools},
     rayon::{prelude::*, ThreadPool},
     reed_solomon_erasure::Error::{InvalidIndex, TooFewParityShards},
@@ -65,7 +66,7 @@ type MerkleProofEntry = [u8; 20];
 pub struct ShredData {
     common_header: ShredCommonHeader,
     data_header: DataShredHeader,
-    payload: Payload,
+    payload: Bytes,
 }
 
 // Layout: {common, coding} headers | erasure coded shard
@@ -78,7 +79,7 @@ pub struct ShredData {
 pub struct ShredCode {
     common_header: ShredCommonHeader,
     coding_header: CodingShredHeader,
-    payload: Payload,
+    payload: Bytes,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

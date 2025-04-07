@@ -10,6 +10,7 @@ use {
         SIZE_OF_SIGNATURE,
     },
     assert_matches::debug_assert_matches,
+    bytes::Bytes,
     solana_perf::packet::deserialize_from_with_limit,
     solana_sdk::{clock::Slot, signature::Signature},
     static_assertions::const_assert_eq,
@@ -39,7 +40,7 @@ pub(super) const SIZE_OF_ERASURE_ENCODED_SLICE: usize =
 pub struct ShredData {
     common_header: ShredCommonHeader,
     data_header: DataShredHeader,
-    payload: Payload,
+    payload: Bytes,
 }
 
 // Layout: {common, coding} headers | erasure coded shard
@@ -48,7 +49,7 @@ pub struct ShredData {
 pub struct ShredCode {
     common_header: ShredCommonHeader,
     coding_header: CodingShredHeader,
-    payload: Payload,
+    payload: Bytes,
 }
 
 impl<'a> Shred<'a> for ShredData {
