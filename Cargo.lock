@@ -412,7 +412,7 @@ dependencies = [
  "log",
  "num_cpus",
  "predicates",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rayon",
  "serde",
  "serde_json",
@@ -531,7 +531,7 @@ dependencies = [
  "getrandom 0.2.15",
  "once_cell",
  "version_check",
- "zerocopy 0.7.31",
+ "zerocopy",
 ]
 
 [[package]]
@@ -1305,7 +1305,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4114279215a005bc675e386011e594e1d9b800918cea18fcadadcce864a2046b"
 dependencies = [
  "borsh-derive 0.10.3",
- "hashbrown 0.12.3",
+ "hashbrown 0.13.2",
 ]
 
 [[package]]
@@ -2663,7 +2663,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27cea6e7f512d43b098939ff4d5a5d6fe3db07971e1d05176fe26c642d33f5b8"
 dependencies = [
  "getrandom 0.3.3",
- "rand 0.9.0",
+ "rand 0.9.1",
  "siphasher 1.0.1",
  "wide",
 ]
@@ -5317,7 +5317,7 @@ dependencies = [
  "fastbloom",
  "getrandom 0.3.3",
  "lru-slab",
- "rand 0.9.0",
+ "rand 0.9.1",
  "ring",
  "rustc-hash 2.0.0",
  "rustls 0.23.27",
@@ -5403,13 +5403,12 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3779b94aeb87e8bd4e834cee3650289ee9e0d5677f976ecdb6d219e5f4f6cd94"
+checksum = "9fbfd9d094a40bf3ae768db9361049ace4c0e04a4fd6b359518bd7b73a73dd97"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
- "zerocopy 0.8.23",
 ]
 
 [[package]]
@@ -6633,7 +6632,7 @@ version = "2.3.0"
 dependencies = [
  "clap 2.33.3",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rayon",
  "solana-account-decoder",
  "solana-accounts-db",
@@ -6699,7 +6698,7 @@ dependencies = [
  "num_cpus",
  "num_enum",
  "qualifier_attr",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rand_chacha 0.3.1",
  "rayon",
  "seqlock",
@@ -6791,7 +6790,7 @@ dependencies = [
  "clap 3.2.23",
  "crossbeam-channel",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rayon",
  "solana-client",
  "solana-compute-budget-interface",
@@ -6912,7 +6911,7 @@ dependencies = [
  "crossbeam-channel",
  "csv",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rayon",
  "serde",
  "serde_json",
@@ -7031,7 +7030,7 @@ version = "2.3.0"
 dependencies = [
  "bv",
  "fnv",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rayon",
  "serde",
  "serde_derive",
@@ -7079,7 +7078,7 @@ dependencies = [
  "libsecp256k1",
  "num-traits",
  "qualifier_attr",
- "rand 0.8.5",
+ "rand 0.9.1",
  "scopeguard",
  "solana-account",
  "solana-account-info",
@@ -7159,7 +7158,7 @@ dependencies = [
  "memmap2 0.9.5",
  "modular-bitfield",
  "num_enum",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rayon",
  "solana-clock",
  "solana-logger",
@@ -7617,7 +7616,7 @@ dependencies = [
  "bincode",
  "criterion",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "solana-borsh",
  "solana-builtins-default-costs",
  "solana-compute-budget",
@@ -7697,7 +7696,7 @@ dependencies = [
  "indexmap 2.9.0",
  "indicatif",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rand_chacha 0.3.1",
  "rayon",
  "solana-keypair",
@@ -7746,7 +7745,7 @@ dependencies = [
  "prio-graph",
  "qualifier_attr",
  "quinn",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rand_chacha 0.3.1",
  "rayon",
  "rolling-file",
@@ -7970,7 +7969,7 @@ dependencies = [
  "crossbeam-channel",
  "itertools 0.12.1",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "serde",
  "solana-bench-tps",
  "solana-client",
@@ -8036,7 +8035,7 @@ version = "2.3.0"
 dependencies = [
  "assert_matches",
  "ed25519-dalek",
- "rand 0.8.5",
+ "rand 0.9.1",
  "solana-ed25519-program",
  "solana-instruction",
  "solana-precompile-error",
@@ -8057,7 +8056,7 @@ dependencies = [
  "dlopen2",
  "lazy_static",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rayon",
  "serde",
  "solana-hash",
@@ -8452,7 +8451,7 @@ dependencies = [
  "num-traits",
  "num_cpus",
  "rand 0.7.3",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rand_chacha 0.2.2",
  "rand_chacha 0.3.1",
  "rayon",
@@ -8664,7 +8663,7 @@ dependencies = [
  "bs58",
  "bytemuck",
  "criterion",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rand_chacha 0.3.1",
 ]
 
@@ -8700,7 +8699,7 @@ dependencies = [
  "proptest",
  "prost",
  "qualifier_attr",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rand_chacha 0.3.1",
  "rayon",
  "reed-solomon-erasure",
@@ -8871,7 +8870,7 @@ dependencies = [
  "gag",
  "itertools 0.12.1",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rayon",
  "serial_test",
  "solana-account",
@@ -9013,7 +9012,7 @@ dependencies = [
  "gethostname",
  "lazy_static",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "reqwest 0.12.15",
  "serial_test",
  "solana-cluster-type",
@@ -9042,7 +9041,7 @@ name = "solana-net-shaper"
 version = "2.3.0"
 dependencies = [
  "clap 3.2.23",
- "rand 0.8.5",
+ "rand 0.9.1",
  "serde",
  "serde_derive",
  "serde_json",
@@ -9061,7 +9060,7 @@ dependencies = [
  "log",
  "nix",
  "pcap-file",
- "rand 0.8.5",
+ "rand 0.9.1",
  "serde",
  "serde_derive",
  "socket2",
@@ -9162,7 +9161,7 @@ dependencies = [
  "libc",
  "log",
  "nix",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rand_chacha 0.3.1",
  "rayon",
  "serde",
@@ -9201,7 +9200,7 @@ dependencies = [
  "crossbeam-channel",
  "log",
  "qualifier_attr",
- "rand 0.8.5",
+ "rand 0.9.1",
  "solana-clock",
  "solana-entry",
  "solana-hash",
@@ -9445,7 +9444,7 @@ dependencies = [
  "itertools 0.12.1",
  "log",
  "percentage",
- "rand 0.8.5",
+ "rand 0.9.1",
  "serde",
  "solana-account",
  "solana-account-info",
@@ -10053,7 +10052,7 @@ dependencies = [
  "percentage",
  "qualifier_attr",
  "rand 0.7.3",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rand_chacha 0.3.1",
  "rayon",
  "regex",
@@ -10172,7 +10171,7 @@ dependencies = [
  "bincode",
  "criterion",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-compute-budget-interface",
@@ -10743,7 +10742,7 @@ dependencies = [
  "percentage",
  "quinn",
  "quinn-proto",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rustls 0.23.27",
  "smallvec",
  "socket2",
@@ -11338,7 +11337,7 @@ dependencies = [
  "bincode",
  "clap 2.33.3",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rayon",
  "solana-clap-utils",
  "solana-cli",
@@ -11390,7 +11389,7 @@ dependencies = [
  "bincode",
  "lazy_static",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "solana-hash",
  "solana-keypair",
  "solana-packet",
@@ -11485,7 +11484,7 @@ dependencies = [
  "log",
  "lru",
  "quinn",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rand_chacha 0.3.1",
  "rayon",
  "rustls 0.23.27",
@@ -11530,7 +11529,7 @@ version = "2.3.0"
 dependencies = [
  "futures 0.3.31",
  "lazy_static",
- "rand 0.8.5",
+ "rand 0.9.1",
  "shuttle",
 ]
 
@@ -11622,7 +11621,7 @@ name = "solana-version"
 version = "2.3.0"
 dependencies = [
  "agave-feature-set",
- "rand 0.8.5",
+ "rand 0.9.1",
  "semver 1.0.26",
  "serde",
  "serde_derive",
@@ -11656,7 +11655,7 @@ dependencies = [
  "percentage",
  "quinn",
  "quinn-proto",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rustls 0.23.27",
  "signal-hook",
  "smallvec",
@@ -11703,7 +11702,7 @@ dependencies = [
  "bincode",
  "itertools 0.12.1",
  "log",
- "rand 0.8.5",
+ "rand 0.9.1",
  "serde",
  "serde_derive",
  "solana-account",
@@ -11808,7 +11807,7 @@ dependencies = [
  "prost-build",
  "prost-types",
  "protobuf-src",
- "rand 0.8.5",
+ "rand 0.9.1",
  "rayon",
  "serial_test",
  "solana-accounts-db",
@@ -11902,7 +11901,7 @@ dependencies = [
  "merlin",
  "num-derive",
  "num-traits",
- "rand 0.8.5",
+ "rand 0.9.1",
  "serde",
  "serde_derive",
  "serde_json",
@@ -11955,7 +11954,7 @@ dependencies = [
  "merlin",
  "num-derive",
  "num-traits",
- "rand 0.8.5",
+ "rand 0.9.1",
  "serde",
  "serde_derive",
  "serde_json",
@@ -14165,16 +14164,7 @@ version = "0.7.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c4061bedbb353041c12f413700357bec76df2c7e2ca8e4df8bac24c6bf68e3d"
 dependencies = [
- "zerocopy-derive 0.7.31",
-]
-
-[[package]]
-name = "zerocopy"
-version = "0.8.23"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd97444d05a4328b90e75e503a34bad781f14e28a823ad3557f0750df1ebcbc6"
-dependencies = [
- "zerocopy-derive 0.8.23",
+ "zerocopy-derive",
 ]
 
 [[package]]
@@ -14182,17 +14172,6 @@ name = "zerocopy-derive"
 version = "0.7.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3c129550b3e6de3fd0ba67ba5c81818f9805e58b8d7fee80a3a59d2c9fc601a"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.101",
-]
-
-[[package]]
-name = "zerocopy-derive"
-version = "0.8.23"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6352c01d0edd5db859a63e2605f4ea3183ddbd15e2c4a9e7d32184df75e4f154"
 dependencies = [
  "proc-macro2",
  "quote",
