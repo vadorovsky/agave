@@ -11,6 +11,7 @@ use {
 
 /// Pulls some packets from the socket into the specified container
 /// returning how many packets were read
+#[cfg(feature = "dev-context-only-utils")]
 pub async fn recv_mmsg(
     socket: &UdpSocket,
     packets: &mut [Packet],
@@ -39,6 +40,7 @@ pub async fn recv_mmsg(
 }
 
 /// Reads the exact number of packets required to fill `packets`
+#[cfg(test)]
 pub async fn recv_mmsg_exact(
     socket: &UdpSocket,
     packets: &mut [Packet],
