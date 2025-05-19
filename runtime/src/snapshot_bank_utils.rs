@@ -1,11 +1,15 @@
+#[cfg(test)]
+use {
+    crate::{bank::BankFieldsToDeserialize, serde_snapshot::fields_from_streams},
+    solana_accounts_db::accounts_file::StorageAccess,
+    tempfile::TempDir,
+};
 use {
     crate::{
-        bank::{Bank, BankFieldsToDeserialize, BankSlotDelta},
+        bank::{Bank, BankSlotDelta},
         epoch_stakes::EpochStakes,
         runtime_config::RuntimeConfig,
-        serde_snapshot::{
-            bank_from_streams, fields_from_streams, BankIncrementalSnapshotPersistence,
-        },
+        serde_snapshot::{bank_from_streams, BankIncrementalSnapshotPersistence},
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter,
         },
@@ -31,7 +35,6 @@ use {
             AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId,
             CalcAccountsHashDataSource, DuplicatesLtHash,
         },
-        accounts_file::StorageAccess,
         accounts_hash::MerkleOrLatticeAccountsHash,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         utils::delete_contents_of_path,
@@ -48,7 +51,6 @@ use {
         path::{Path, PathBuf},
         sync::{atomic::AtomicBool, Arc},
     },
-    tempfile::TempDir,
 };
 
 pub const DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = 50_000;
@@ -81,6 +83,7 @@ pub struct BankFromDirTimings {
 
 /// Utility for parsing out bank specific information from a snapshot archive. This utility can be used
 /// to parse out bank specific information like the leader schedule, epoch schedule, etc.
+#[cfg(test)]
 pub fn bank_fields_from_snapshot_archives(
     full_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_archives_dir: impl AsRef<Path>,
@@ -498,6 +501,7 @@ fn verify_bank_against_expected_slot_hash(
     }
 }
 
+#[cfg(test)]
 fn bank_fields_from_snapshots(
     full_snapshot_unpacked_snapshots_dir_and_version: &UnpackedSnapshotsDirAndVersion,
     incremental_snapshot_unpacked_snapshots_dir_and_version: Option<
