@@ -1268,6 +1268,7 @@ mod test {
     use {
         super::*,
         crate::repair::quic_endpoint::RemoteRequest,
+        bytes::BytesMut,
         solana_gossip::{contact_info::ContactInfo, node::Node},
         solana_keypair::Keypair,
         solana_ledger::{
@@ -1279,9 +1280,10 @@ mod test {
             shred::max_ticks_per_n_shreds,
         },
         solana_net_utils::sockets::bind_to_localhost_unique,
+        solana_packet::PACKET_DATA_SIZE,
         solana_runtime::bank::Bank,
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
+        solana_streamer::{recvmmsg::RecvMetas, socket::SocketAddrSpace},
         solana_time_utils::timestamp,
         std::collections::HashSet,
     };
@@ -1316,16 +1318,14 @@ mod test {
         );
 
         // Receive and translate repair packet
-        let mut packets = vec![solana_packet::Packet::default(); 1];
-        let _recv_count = solana_streamer::recvmmsg::recv_mmsg(&reader, &mut packets[..]).unwrap();
-        let packet = &packets[0];
-        let Some(bytes) = packet.data(..).map(Vec::from) else {
-            panic!("packet data not found");
-        };
+        let mut buffer = BytesMut::with_capacity(PACKET_DATA_SIZE);
+        let mut metas = RecvMetas::new();
+        let _recv_count =
+            solana_streamer::recvmmsg::recv_mmsg(&reader, &mut [&mut buffer], &mut metas).unwrap();
         let remote_request = RemoteRequest {
             remote_pubkey: None,
-            remote_address: packet.meta().socket_addr(),
-            bytes: Bytes::from(bytes),
+            remote_address: metas[0].socket_addr().unwrap(),
+            bytes: buffer.freeze(),
         };
 
         // Deserialize and check the request

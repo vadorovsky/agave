@@ -10809,6 +10809,7 @@ name = "solana-streamer"
 version = "3.0.0"
 dependencies = [
  "arc-swap",
+ "arrayvec",
  "assert_matches",
  "async-channel",
  "bytes",

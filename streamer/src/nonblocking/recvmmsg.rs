@@ -1,10 +1,7 @@
 //! The `recvmmsg` module provides a nonblocking recvmmsg() API implementation
 
 use {
-    crate::{
-        packet::{Meta, Packet},
-        recvmmsg::PACKETS_PER_BATCH,
-    },
+    crate::packet::{Meta, Packet, PACKETS_PER_BATCH},
     std::{cmp, io},
     tokio::net::UdpSocket,
 };
