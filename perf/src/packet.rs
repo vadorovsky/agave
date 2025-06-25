@@ -133,6 +133,16 @@ impl BytesPacket {
     pub fn as_mut(&mut self) -> PacketRefMut<'_> {
         PacketRefMut::Bytes(self)
     }
+
+    #[inline]
+    pub fn buffer(&self) -> &Bytes {
+        &self.buffer
+    }
+
+    #[inline]
+    pub fn set_buffer(&mut self, buffer: impl Into<Bytes>) {
+        self.buffer = buffer.into();
+    }
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
