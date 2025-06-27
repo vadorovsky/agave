@@ -3,6 +3,7 @@
 #[cfg(target_os = "linux")]
 use {
     crate::msghdr::create_msghdr,
+    arrayvec::ArrayVec,
     itertools::izip,
     libc::{iovec, mmsghdr, sockaddr_in, sockaddr_in6, sockaddr_storage, socklen_t},
     std::{
@@ -66,9 +67,9 @@ where
 fn mmsghdr_for_packet(
     packet: &[u8],
     dest: &SocketAddr,
-    iov: &mut MaybeUninit<iovec>,
-    addr: &mut MaybeUninit<sockaddr_storage>,
-    hdr: &mut MaybeUninit<mmsghdr>,
+    iov: &mut iovec,
+    addr: &mut sockaddr_storage,
+    hdr: &mut mmsghdr,
 ) {
     const SIZE_OF_SOCKADDR_IN: usize = mem::size_of::<sockaddr_in>();
     const SIZE_OF_SOCKADDR_IN6: usize = mem::size_of::<sockaddr_in6>();
@@ -76,10 +77,10 @@ fn mmsghdr_for_packet(
     const SOCKADDR_IN_PADDING: usize = SIZE_OF_SOCKADDR_STORAGE - SIZE_OF_SOCKADDR_IN;
     const SOCKADDR_IN6_PADDING: usize = SIZE_OF_SOCKADDR_STORAGE - SIZE_OF_SOCKADDR_IN6;
 
-    iov.write(iovec {
+    let mut iov = iovec {
         iov_base: packet.as_ptr() as *mut libc::c_void,
         iov_len: packet.len(),
-    });
+    };
 
     let msg_namelen = match dest {
         SocketAddr::V4(socket_addr_v4) => {
@@ -116,7 +117,7 @@ fn mmsghdr_for_packet(
         }
     };
 
-    let msg_hdr = create_msghdr(addr, msg_namelen, iov);
+    let msg_hdr = create_msghdr(addr, msg_namelen, &mut iov);
 
     hdr.write(mmsghdr {
         msg_len: 0,

@@ -4,10 +4,11 @@ pub use solana_perf::packet::NUM_RCVMMSGS;
 #[cfg(target_os = "linux")]
 use {
     crate::msghdr::create_msghdr,
+    arrayvec::ArrayVec,
     itertools::izip,
     libc::{iovec, mmsghdr, sockaddr_storage, socklen_t, AF_INET, AF_INET6, MSG_WAITFORONE},
     std::{
-        mem::{self, MaybeUninit},
+        mem::{self, zeroed, MaybeUninit},
         net::{SocketAddr, SocketAddrV4, SocketAddrV6},
         os::unix::io::AsRawFd,
     },
@@ -101,25 +102,29 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
     const SOCKADDR_STORAGE_SIZE: socklen_t = mem::size_of::<sockaddr_storage>() as socklen_t;
 
-    let mut iovs = [MaybeUninit::uninit(); NUM_RCVMMSGS];
-    let mut addrs = [MaybeUninit::zeroed(); NUM_RCVMMSGS];
-    let mut hdrs = [MaybeUninit::uninit(); NUM_RCVMMSGS];
+    let mut iovs = ArrayVec::<_, NUM_RCVMMSGS>::new();
+    let mut addrs = ArrayVec::<_, NUM_RCVMMSGS>::new();
+    let mut hdrs = ArrayVec::<_, NUM_RCVMMSGS>::new();
 
     let sock_fd = sock.as_raw_fd();
-    let count = cmp::min(iovs.len(), packets.len());
+    let count = cmp::min(NUM_RCVMMSGS, packets.len());
 
-    for (packet, hdr, iov, addr) in
-        izip!(packets.iter_mut(), &mut hdrs, &mut iovs, &mut addrs).take(count)
-    {
+    for packet in packets.iter_mut().take(count) {
         let buffer = packet.buffer_mut();
-        iov.write(iovec {
+        let mut iov = iovec {
             iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
             iov_len: buffer.len(),
-        });
+        };
 
-        let msg_hdr = create_msghdr(addr, SOCKADDR_STORAGE_SIZE, iov);
+        // SAFETY: `sockaddr_storage` is POD, it's safe to initialize it with
+        // zeros.
+        let mut addr: sockaddr_storage = unsafe { zeroed() };
 
-        hdr.write(mmsghdr {
+        let msg_hdr = create_msghdr(&mut addr, SOCKADDR_STORAGE_SIZE, &mut iov);
+
+        addrs.push(addr);
+        iovs.push(iov);
+        hdrs.push(mmsghdr {
             msg_len: 0,
             msg_hdr,
         });
@@ -134,7 +139,7 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     let nrecv = unsafe {
         libc::recvmmsg(
             sock_fd,
-            hdrs[0].assume_init_mut(),
+            &mut hdrs[0] as *mut _,
             count as u32,
             MSG_WAITFORONE.try_into().unwrap(),
             &mut ts,
@@ -146,32 +151,9 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
         usize::try_from(nrecv).unwrap()
     };
     for (addr, hdr, pkt) in izip!(addrs, hdrs, packets.iter_mut()).take(nrecv) {
-        // SAFETY: We initialized `count` elements of `hdrs` above. `count` is
-        // passed to recvmmsg() as the limit of messages that can be read. So,
-        // `nrevc <= count` which means we initialized this `hdr` and
-        // recvmmsg() will have updated it appropriately
-        let hdr_ref = unsafe { hdr.assume_init_ref() };
-        // SAFETY: Similar to above, we initialized this `addr` and recvmmsg()
-        // will have populated it
-        let addr_ref = unsafe { addr.assume_init_ref() };
-        pkt.meta_mut().size = hdr_ref.msg_len as usize;
-        if let Some(addr) = cast_socket_addr(addr_ref, hdr_ref) {
+        pkt.meta_mut().size = hdr.msg_len as usize;
+        if let Some(addr) = cast_socket_addr(&addr, &hdr) {
             pkt.meta_mut().set_socket_addr(&addr);
-        }
-    }
-
-    for (iov, addr, hdr) in izip!(&mut iovs, &mut addrs, &mut hdrs).take(count) {
-        // SAFETY: We initialized `count` elements of each array above
-        //
-        // It may be that `packets.len() != NUM_RCVMMSGS`; thus, some elements
-        // in `iovs` / `addrs` / `hdrs` may not get initialized. So, we must
-        // manually drop `count` elements from each array instead of being able
-        // to convert [MaybeUninit<T>] to [T] and letting `Drop` do the work
-        // for us when these items go out of scope at the end of the function
-        unsafe {
-            iov.assume_init_drop();
-            addr.assume_init_drop();
-            hdr.assume_init_drop();
         }
     }
 
