@@ -60,6 +60,7 @@ blake3 = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true }
 crossbeam-channel = { workspace = true }
+crossbeam-deque = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 dir-diff = { workspace = true }
 fnv = { workspace = true }
