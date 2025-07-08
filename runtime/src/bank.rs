@@ -925,7 +925,7 @@ struct VoteReward {
     vote_rewards: u64,
 }
 
-type VoteRewards = DashMap<Pubkey, VoteReward, RandomState>;
+type VoteRewards = HashMap<Pubkey, VoteReward, RandomState>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
@@ -1858,7 +1858,7 @@ impl Bank {
             .thread_name(|i| format!("solBnkNewFlds{i:02}"))
             .build()
             .expect("new rayon threadpool");
-        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
+        bank.recalculate_partitioned_rewards(null_tracer());
 
         bank.finish_init(
             genesis_config,
@@ -2451,14 +2451,16 @@ impl Bank {
     /// - we want this fn to have no side effects (such as actually storing vote accounts) so that we
     ///   can compare the expected results with the current code path
     /// - we want to be able to batch store the vote accounts later for improved performance/cache updating
-    fn calc_vote_accounts_to_store(vote_account_rewards: VoteRewards) -> VoteRewardsAccounts {
-        let len = vote_account_rewards.len();
+    fn calc_vote_accounts_to_store(
+        vote_account_rewards: impl IntoIterator<Item = VoteRewards>,
+        len: usize,
+    ) -> VoteRewardsAccounts {
         let mut result = VoteRewardsAccounts {
             rewards: Vec::with_capacity(len),
             accounts_to_store: Vec::with_capacity(len),
             total_vote_rewards_lamports: 0,
         };
-        vote_account_rewards.into_iter().for_each(
+        vote_account_rewards.into_iter().flatten().for_each(
             |(
                 vote_pubkey,
                 VoteReward {
