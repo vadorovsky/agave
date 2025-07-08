@@ -46,7 +46,7 @@ pub(crate) struct StartBlockHeightAndRewards {
     /// the block height of the slot at which rewards distribution began
     pub(crate) distribution_starting_block_height: u64,
     /// calculated epoch rewards before partitioning
-    pub(crate) all_stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+    pub(crate) all_stake_rewards: Arc<PartitionedStakeRewards>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,7 +55,7 @@ pub(crate) struct StartBlockHeightAndPartitionedRewards {
     pub(crate) distribution_starting_block_height: u64,
 
     /// calculated epoch rewards pending distribution
-    pub(crate) all_stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+    pub(crate) all_stake_rewards: Arc<PartitionedStakeRewards>,
 
     /// indices of calculated epoch rewards per partition, outer Vec is by
     /// partition (one partition per block), inner Vec is the indices for one
@@ -234,7 +234,7 @@ impl Bank {
     pub(crate) fn set_epoch_reward_status_calculation(
         &mut self,
         distribution_starting_block_height: u64,
-        stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+        stake_rewards: Arc<PartitionedStakeRewards>,
     ) {
         self.epoch_reward_status =
             EpochRewardStatus::Active(EpochRewardPhase::Calculation(StartBlockHeightAndRewards {
@@ -246,7 +246,7 @@ impl Bank {
     pub(crate) fn set_epoch_reward_status_distribution(
         &mut self,
         distribution_starting_block_height: u64,
-        all_stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+        all_stake_rewards: Arc<PartitionedStakeRewards>,
         partition_indices: Vec<Vec<usize>>,
     ) {
         self.epoch_reward_status = EpochRewardStatus::Active(EpochRewardPhase::Distribution(
@@ -352,9 +352,9 @@ mod tests {
     }
 
     pub fn build_partitioned_stake_rewards(
-        stake_rewards: &[PartitionedStakeReward],
+        stake_rewards: &PartitionedStakeRewards,
         partition_indices: &[Vec<usize>],
-    ) -> Vec<Vec<PartitionedStakeReward>> {
+    ) -> Vec<PartitionedStakeRewards> {
         partition_indices
             .iter()
             .map(|partition_index| {
@@ -363,7 +363,7 @@ mod tests {
                 partition_index
                     .iter()
                     .map(|&index| stake_rewards[index].clone())
-                    .collect::<Vec<_>>()
+                    .collect::<_>()
             })
             .collect::<Vec<_>>()
     }

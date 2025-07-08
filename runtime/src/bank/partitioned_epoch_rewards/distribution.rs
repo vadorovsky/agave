@@ -744,7 +744,7 @@ mod tests {
             .map(|_| StakeReward::new_random())
             .collect::<Vec<_>>();
         populate_starting_stake_accounts_from_stake_rewards(&bank, &stake_rewards);
-        let converted_rewards: Vec<_> = convert_rewards(stake_rewards);
+        let converted_rewards = convert_rewards(stake_rewards);
 
         let expected_total = converted_rewards
             .iter()

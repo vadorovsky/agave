@@ -1368,7 +1368,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4114279215a005bc675e386011e594e1d9b800918cea18fcadadcce864a2046b"
 dependencies = [
  "borsh-derive 0.10.3",
- "hashbrown 0.13.2",
+ "hashbrown 0.12.3",
 ]
 
 [[package]]
@@ -1431,9 +1431,9 @@ dependencies = [
 
 [[package]]
 name = "boxcar"
-version = "0.2.12"
+version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66bb12751a83493ef4b8da1120451a262554e216a247f14b48cb5e8fe7ed8bdf"
+checksum = "26c4925bc979b677330a8c7fe7a8c94af2dbb4a2d37b4a20a80d884400f46baa"
 
 [[package]]
 name = "brotli"
@@ -9336,15 +9336,19 @@ dependencies = [
  "assert_matches",
  "bencher",
  "bincode",
+ "boxcar",
  "bv",
  "bytes",
  "caps",
+ "crossbeam-channel",
  "curve25519-dalek 4.1.3",
  "dlopen2",
  "fnv",
+ "itertools 0.12.1",
  "libc",
  "log",
  "nix",
+ "num_cpus",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rayon",
@@ -9372,6 +9376,7 @@ dependencies = [
  "solana-vote",
  "solana-vote-program",
  "test-case",
+ "thiserror 2.0.12",
  "tikv-jemallocator",
 ]
 
@@ -10183,6 +10188,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "blake3",
+ "boxcar",
  "bv",
  "bytemuck",
  "crossbeam-channel",
@@ -10646,8 +10652,7 @@ dependencies = [
 [[package]]
 name = "solana-stake-interface"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5269e89fde216b4d7e1d1739cf5303f8398a1ff372a81232abbee80e554a838c"
+source = "git+https://github.com/vadorovsky/stake?branch=optimize-stake-history-1.2.1#a782de5fae3b79150f0d64c0b9f7f885200dfa06"
 dependencies = [
  "borsh 0.10.3",
  "borsh 1.5.7",

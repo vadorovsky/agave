@@ -1,10 +1,10 @@
 use {
-    crate::bank::partitioned_epoch_rewards::PartitionedStakeReward, itertools::enumerate,
+    crate::bank::partitioned_epoch_rewards::PartitionedStakeRewards, itertools::enumerate,
     solana_epoch_rewards_hasher::EpochRewardsHasher, solana_hash::Hash,
 };
 
 pub(in crate::bank::partitioned_epoch_rewards) fn hash_rewards_into_partitions(
-    stake_rewards: &[PartitionedStakeReward],
+    stake_rewards: &PartitionedStakeRewards,
     parent_blockhash: &Hash,
     num_partitions: usize,
 ) -> Vec<Vec<usize>> {
