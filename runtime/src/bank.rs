@@ -64,7 +64,9 @@ use {
     ahash::{AHashSet, RandomState},
     dashmap::{DashMap, DashSet},
     log::*,
-    partitioned_epoch_rewards::PartitionedRewardsCalculation,
+    partitioned_epoch_rewards::{
+        PartitionedRewardsCalculation, StakeDelegations, StakeDelegationsByVoter,
+    },
     rayon::{
         iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
         ThreadPoolBuilder,
@@ -941,7 +943,7 @@ struct VoteReward {
     vote_rewards: u64,
 }
 
-type VoteRewards = DashMap<Pubkey, VoteReward, RandomState>;
+type VoteRewards = HashMap<Pubkey, VoteReward, RandomState>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
@@ -1877,7 +1879,7 @@ impl Bank {
             .thread_name(|i| format!("solBnkNewFlds{i:02}"))
             .build()
             .expect("new rayon threadpool");
-        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
+        bank.recalculate_partitioned_rewards(null_tracer());
 
         bank.finish_init(
             genesis_config,
@@ -2430,36 +2432,72 @@ impl Bank {
     fn filter_stake_delegations<'a>(
         &self,
         stakes: &'a Stakes<StakeAccount<Delegation>>,
-    ) -> Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)> {
-        if self
+    ) -> (StakeDelegations<'a>, StakeDelegationsByVoter<'a>) {
+        fn build_collections<'a>(
+            stake_delegations_iter: impl Iterator<Item = (&'a Pubkey, &'a StakeAccount<Delegation>)>,
+        ) -> (StakeDelegations<'a>, StakeDelegationsByVoter<'a>, usize) {
+            let mut stake_delegations = StakeDelegations::new();
+            let mut stake_delegations_by_voter = StakeDelegationsByVoter::new();
+            let mut num_stake_delegations_after: usize = 0;
+            for (stake_pubkey, stake_account) in stake_delegations_iter {
+                num_stake_delegations_after = num_stake_delegations_after.saturating_add(1);
+
+                stake_delegations.push((stake_pubkey, stake_account));
+
+                let voter_pubkey = &stake_account.delegation().voter_pubkey;
+                stake_delegations_by_voter
+                    .entry(voter_pubkey)
+                    .and_modify(|stake_delegations| {
+                        stake_delegations.push((stake_pubkey, stake_account))
+                    })
+                    .or_insert_with(|| vec![(stake_pubkey, stake_account)]);
+            }
+            (
+                stake_delegations,
+                stake_delegations_by_voter,
+                num_stake_delegations_after,
+            )
+        }
+
+        let mut filter_time = Measure::start("filter_time");
+
+        let num_stake_delegations = stakes.stake_delegations().len();
+        let (stake_delegations, stake_delegations_by_voter, num_stake_delegations_after) = if self
             .feature_set
             .is_active(&feature_set::stake_minimum_delegation_for_rewards::id())
         {
-            let num_stake_delegations = stakes.stake_delegations().len();
             let min_stake_delegation = solana_stake_program::get_minimum_delegation(
                 self.feature_set
                     .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
             )
             .max(LAMPORTS_PER_SOL);
 
-            let (stake_delegations, filter_time_us) = measure_us!(stakes
-                .stake_delegations()
-                .iter()
-                .filter(|(_stake_pubkey, cached_stake_account)| {
+            let stake_delegations = stakes.stake_delegations().iter().filter(
+                |(_stake_pubkey, cached_stake_account)| {
                     cached_stake_account.delegation().stake >= min_stake_delegation
-                })
-                .collect::<Vec<_>>());
-
-            datapoint_info!(
-                "stake_account_filter_time",
-                ("filter_time_us", filter_time_us, i64),
-                ("num_stake_delegations_before", num_stake_delegations, i64),
-                ("num_stake_delegations_after", stake_delegations.len(), i64)
+                },
             );
-            stake_delegations
+
+            build_collections(stake_delegations)
         } else {
-            stakes.stake_delegations().iter().collect()
-        }
+            build_collections(stakes.stake_delegations().iter())
+        };
+
+        filter_time.stop();
+        let filter_time_us = filter_time.as_us();
+
+        datapoint_info!(
+            "stake_account_filter_time",
+            ("filter_time_us", filter_time_us, i64),
+            ("num_stake_delegations_before", num_stake_delegations, i64),
+            (
+                "num_stake_delegations_after",
+                num_stake_delegations_after,
+                i64
+            )
+        );
+
+        (stake_delegations, stake_delegations_by_voter)
     }
 
     /// return reward info for each vote account

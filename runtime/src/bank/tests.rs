@@ -1135,7 +1135,8 @@ impl Bank {
         reward_calc_tracer: Option<impl RewardCalcTracer>,
     ) -> StakeDelegationsMap {
         let stakes = self.stakes_cache.stakes();
-        let stake_delegations = self.filter_stake_delegations(&stakes);
+        let (stake_delegations, _stake_delegations_by_voter) =
+            self.filter_stake_delegations(&stakes);
         // Obtain all unique voter pubkeys from stake delegations.
         fn merge(mut acc: HashSet<Pubkey>, other: HashSet<Pubkey>) -> HashSet<Pubkey> {
             if acc.len() < other.len() {
@@ -11783,7 +11784,7 @@ fn test_system_instruction_unsigned_transaction() {
 
 #[test]
 fn test_calc_vote_accounts_to_store_empty() {
-    let vote_account_rewards = DashMap::default();
+    let vote_account_rewards = HashMap::default();
     let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
     assert_eq!(result.rewards.len(), result.accounts_to_store.len());
     assert!(result.rewards.is_empty());
@@ -11791,7 +11792,7 @@ fn test_calc_vote_accounts_to_store_empty() {
 
 #[test]
 fn test_calc_vote_accounts_to_store_overflow() {
-    let vote_account_rewards = DashMap::default();
+    let mut vote_account_rewards = HashMap::default();
     let pubkey = solana_pubkey::new_rand();
     let mut vote_account = AccountSharedData::default();
     vote_account.set_lamports(u64::MAX);
@@ -11813,7 +11814,7 @@ fn test_calc_vote_accounts_to_store_normal() {
     let pubkey = solana_pubkey::new_rand();
     for commission in 0..2 {
         for vote_rewards in 0..2 {
-            let vote_account_rewards = DashMap::default();
+            let mut vote_account_rewards = HashMap::default();
             let mut vote_account = AccountSharedData::default();
             vote_account.set_lamports(1);
             vote_account_rewards.insert(

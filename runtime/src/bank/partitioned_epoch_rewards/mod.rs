@@ -17,7 +17,7 @@ use {
     solana_reward_info::RewardInfo,
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
-    std::sync::Arc,
+    std::{collections::HashMap, sync::Arc},
 };
 
 /// Number of blocks for reward calculation and storing vote accounts.
@@ -119,10 +119,14 @@ impl Default for CalculateValidatorRewardsResult {
     }
 }
 
+pub(super) type StakeDelegations<'a> = Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>;
+pub(super) type StakeDelegationsByVoter<'a> = HashMap<&'a Pubkey, StakeDelegations<'a>>;
+
 /// hold reward calc info to avoid recalculation across functions
 pub(super) struct EpochRewardCalculateParamInfo<'a> {
     pub(super) stake_history: StakeHistory,
-    pub(super) stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+    pub(super) stake_delegations: StakeDelegations<'a>,
+    pub(super) stake_delegations_by_voter: StakeDelegationsByVoter<'a>,
     pub(super) cached_vote_accounts: &'a VoteAccounts,
 }
 
