@@ -2353,12 +2353,11 @@ impl Bank {
     /// - we want to be able to batch store the vote accounts later for improved performance/cache updating
     fn calc_vote_accounts_to_store(
         vote_account_rewards: impl IntoIterator<Item = VoteRewards>,
-        len: usize,
     ) -> VoteRewardsAccounts {
         // let len = vote_account_rewards.len();
         let mut result = VoteRewardsAccounts {
-            rewards: Vec::with_capacity(len),
-            accounts_to_store: Vec::with_capacity(len),
+            rewards: Vec::new(),
+            accounts_to_store: Vec::new(),
             total_vote_rewards_lamports: 0,
         };
         vote_account_rewards.into_iter().flatten().for_each(
