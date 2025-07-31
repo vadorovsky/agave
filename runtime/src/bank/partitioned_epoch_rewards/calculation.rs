@@ -363,10 +363,8 @@ impl Bank {
             .zip(vote_account_rewards.iter_mut())
             .collect();
 
-        let (_, measure_stake_rewards_us) = measure_us!(crate::thread_pool::scope_with_states(
-            "solStkRwrds",
-            &mut worker_states,
-            |s| {
+        let (_, measure_stake_rewards_us) = measure_us!(
+            solana_perf::thread_pool::scope_with_states("solStkRwrds", &mut worker_states, |s| {
                 for stake_delegations in stake_delegations.chunks(10_000) {
                     let vote_account_rewards_len = Arc::clone(&vote_account_rewards_len);
                     let total_stake_rewards = Arc::clone(&total_stake_rewards);
@@ -460,8 +458,8 @@ impl Bank {
                         }
                     });
                 }
-            }
-        ));
+            })
+        );
 
         let vote_account_rewards_len = vote_account_rewards_len.load(Relaxed);
 
