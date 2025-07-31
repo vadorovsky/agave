@@ -41,6 +41,7 @@ bytes = { workspace = true, features = ["serde"] }
 curve25519-dalek = { workspace = true }
 dlopen2 = { workspace = true }
 fnv = { workspace = true }
+itertools = { workspace = true }
 log = { workspace = true }
 num_cpus = { workspace = true }
 rand = { workspace = true }
