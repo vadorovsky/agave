@@ -9,7 +9,7 @@ use {
     crate::{
         bank::{
             PrevEpochInflationRewards, RewardCalcTracer, RewardCalculationEvent, RewardsMetrics,
-            VoteReward,
+            VoteReward, VoteRewards,
         },
         inflation_rewards::{
             points::{calculate_points, PointValue},
@@ -18,8 +18,8 @@ use {
         stake_account::StakeAccount,
         stakes::Stakes,
     },
-    ahash::RandomState,
     boxcar::Vec as BoxcarVec,
+    dashmap::DashMap,
     log::{debug, info},
     rayon::{
         iter::{IntoParallelRefIterator, ParallelIterator},
@@ -28,17 +28,14 @@ use {
     solana_account::ReadableAccount,
     solana_clock::{Epoch, Slot},
     solana_measure::measure_us,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_stake_interface::state::Delegation,
     solana_sysvar::epoch_rewards::EpochRewards,
     solana_vote::vote_account::VoteAccount,
     solana_vote_program::vote_state::VoteStateVersions,
-    std::{
-        collections::HashMap,
-        sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
-            Arc,
-        },
+    std::sync::{
+        atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
+        Arc,
     },
 };
 
@@ -350,115 +347,109 @@ impl Bank {
 
         let num_workers = num_cpus::get();
 
+        let random_state = PubkeyHasherBuilder::default();
+
         let stake_rewards = Arc::new(BoxcarVec::with_capacity(stake_delegations.len()));
-        let mut vote_account_rewards: Vec<_> = (0..num_workers)
-            .map(|_| HashMap::with_hasher(RandomState::new()))
-            .collect();
+        let estimated_num_vote_accounts = cached_vote_accounts.len();
+        let vote_account_rewards: VoteRewards = DashMap::with_capacity_and_hasher_and_shard_amount(
+            estimated_num_vote_accounts,
+            random_state.clone(),
+            num_workers, // shard amount
+        );
 
-        let (_, measure_stake_rewards_us) =
-            measure_us!(solana_perf::thread_pool::scope_with_states(
-                "solStkRwrds",
-                &mut vote_account_rewards,
-                |s| {
-                    for stake_delegations in stake_delegations.chunks(10_000) {
-                        let vote_account_rewards_len = Arc::clone(&vote_account_rewards_len);
-                        let total_stake_rewards = Arc::clone(&total_stake_rewards);
-                        let reward_calc_tracer = Arc::clone(&reward_calc_tracer);
-                        let stake_rewards = Arc::clone(&stake_rewards);
-                        let point_value = point_value.clone();
+        let (_, measure_stake_rewards_us) = measure_us!(solana_perf::thread_pool::scope(
+            "solStkRwrds",
+            num_workers,
+            &stake_delegations,
+            random_state,
+            |stake_delegations| {
+                let vote_account_rewards_len = Arc::clone(&vote_account_rewards_len);
+                let total_stake_rewards = Arc::clone(&total_stake_rewards);
+                let reward_calc_tracer = Arc::clone(&reward_calc_tracer);
+                let stake_rewards = Arc::clone(&stake_rewards);
+                let point_value = point_value.clone();
 
-                        s.spawn(move |vote_account_rewards| {
-                            for (stake_pubkey, stake_account) in stake_delegations {
-                                // curry closure to add the contextual stake_pubkey
-                                let reward_calc_tracer =
-                                    reward_calc_tracer.as_ref().as_ref().map(|outer| {
-                                        // inner
-                                        move |inner_event: &_| {
-                                            outer(&RewardCalculationEvent::Staking(
-                                                stake_pubkey,
-                                                inner_event,
-                                            ))
-                                        }
-                                    });
+                for (stake_pubkey, stake_account) in stake_delegations {
+                    // curry closure to add the contextual stake_pubkey
+                    let reward_calc_tracer = reward_calc_tracer.as_ref().as_ref().map(|outer| {
+                        // inner
+                        move |inner_event: &_| {
+                            outer(&RewardCalculationEvent::Staking(stake_pubkey, inner_event))
+                        }
+                    });
 
-                                let stake_pubkey = **stake_pubkey;
-                                let vote_pubkey = stake_account.delegation().voter_pubkey;
-                                let vote_account_from_cache =
-                                    cached_vote_accounts.get(&vote_pubkey);
-                                if ASSERT_STAKE_CACHE && vote_account_from_cache.is_none() {
-                                    let account_from_db =
-                                        self.get_account_with_fixed_root(&vote_pubkey);
-                                    if let Some(account_from_db) = account_from_db {
-                                        if VoteStateVersions::is_correct_size_and_initialized(
-                                            account_from_db.data(),
-                                        ) && VoteAccount::try_from(account_from_db.clone())
-                                            .is_ok()
-                                        {
-                                            panic!(
-                                        "Vote account {} not found in cache, but found in db: {:?}",
-                                        vote_pubkey, account_from_db
-                                    );
-                                        }
-                                    }
-                                }
-                                let Some(vote_account) = vote_account_from_cache else {
-                                    return;
-                                };
-                                let vote_state_view = vote_account.vote_state_view();
-                                let mut stake_state = *stake_account.stake_state();
-
-                                let redeemed = redeem_rewards(
-                                    rewarded_epoch,
-                                    &mut stake_state,
-                                    vote_state_view,
-                                    &point_value,
-                                    stake_history,
-                                    reward_calc_tracer.as_ref(),
-                                    new_warmup_cooldown_rate_epoch,
+                    let stake_pubkey = **stake_pubkey;
+                    let vote_pubkey = stake_account.delegation().voter_pubkey;
+                    let vote_account_from_cache = cached_vote_accounts.get(&vote_pubkey);
+                    if ASSERT_STAKE_CACHE && vote_account_from_cache.is_none() {
+                        let account_from_db = self.get_account_with_fixed_root(&vote_pubkey);
+                        if let Some(account_from_db) = account_from_db {
+                            if VoteStateVersions::is_correct_size_and_initialized(
+                                account_from_db.data(),
+                            ) && VoteAccount::try_from(account_from_db.clone()).is_ok()
+                            {
+                                panic!(
+                                    "Vote account {} not found in cache, but found in db: {:?}",
+                                    vote_pubkey, account_from_db
                                 );
-
-                                if let Ok((stakers_reward, voters_reward)) = redeemed {
-                                    let commission = vote_state_view.commission();
-
-                                    // track voter rewards
-                                    let voters_reward_entry = vote_account_rewards
-                                        .entry(vote_pubkey)
-                                        .or_insert_with(|| {
-                                            vote_account_rewards_len.fetch_add(1, Relaxed);
-                                            VoteReward {
-                                                commission,
-                                                vote_account: vote_account.into(),
-                                                vote_rewards: 0,
-                                            }
-                                        });
-
-                                    voters_reward_entry.vote_rewards = voters_reward_entry
-                                        .vote_rewards
-                                        .saturating_add(voters_reward);
-
-                                    total_stake_rewards.fetch_add(stakers_reward, Relaxed);
-
-                                    // Safe to unwrap because all stake_delegations are type
-                                    // StakeAccount<Delegation>, which will always only wrap
-                                    // a `StakeStateV2::Stake` variant.
-                                    let stake = stake_state.stake().unwrap();
-                                    stake_rewards.push(PartitionedStakeReward {
-                                        stake_pubkey,
-                                        stake_reward: stakers_reward,
-                                        stake,
-                                        commission,
-                                    });
-                                } else {
-                                    debug!(
-                                        "redeem_rewards() failed for {}: {:?}",
-                                        stake_pubkey, redeemed
-                                    );
-                                }
                             }
+                        }
+                    }
+                    let Some(vote_account) = vote_account_from_cache else {
+                        return;
+                    };
+                    let vote_state_view = vote_account.vote_state_view();
+                    let mut stake_state = *stake_account.stake_state();
+
+                    let redeemed = redeem_rewards(
+                        rewarded_epoch,
+                        &mut stake_state,
+                        vote_state_view,
+                        &point_value,
+                        stake_history,
+                        reward_calc_tracer.as_ref(),
+                        new_warmup_cooldown_rate_epoch,
+                    );
+
+                    if let Ok((stakers_reward, voters_reward)) = redeemed {
+                        let commission = vote_state_view.commission();
+
+                        // track voter rewards
+                        let mut voters_reward_entry =
+                            vote_account_rewards.entry(vote_pubkey).or_insert_with(|| {
+                                vote_account_rewards_len.fetch_add(1, Relaxed);
+                                VoteReward {
+                                    commission,
+                                    vote_account: vote_account.into(),
+                                    vote_rewards: 0,
+                                }
+                            });
+
+                        voters_reward_entry.vote_rewards = voters_reward_entry
+                            .vote_rewards
+                            .saturating_add(voters_reward);
+
+                        total_stake_rewards.fetch_add(stakers_reward, Relaxed);
+
+                        // Safe to unwrap because all stake_delegations are type
+                        // StakeAccount<Delegation>, which will always only wrap
+                        // a `StakeStateV2::Stake` variant.
+                        let stake = stake_state.stake().unwrap();
+                        stake_rewards.push(PartitionedStakeReward {
+                            stake_pubkey,
+                            stake_reward: stakers_reward,
+                            stake,
+                            commission,
                         });
+                    } else {
+                        debug!(
+                            "redeem_rewards() failed for {}: {:?}",
+                            stake_pubkey, redeemed
+                        );
                     }
                 }
-            ));
+            }
+        ));
 
         let vote_account_rewards_len = vote_account_rewards_len.load(Relaxed);
 
