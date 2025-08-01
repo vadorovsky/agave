@@ -63,7 +63,7 @@ use {
     agave_syscalls::{
         create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
-    ahash::{AHashSet, RandomState},
+    ahash::AHashSet,
     dashmap::DashMap,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
@@ -112,7 +112,7 @@ use {
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
     },
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_rent_collector::RentCollector,
     solana_reward_info::RewardInfo,
     solana_runtime_transaction::{
@@ -912,7 +912,7 @@ struct VoteReward {
     vote_rewards: u64,
 }
 
-type VoteRewards = HashMap<Pubkey, VoteReward, RandomState>;
+type VoteRewards = DashMap<Pubkey, VoteReward, PubkeyHasherBuilder>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
@@ -2341,14 +2341,14 @@ impl Bank {
     ///   can compare the expected results with the current code path
     /// - we want to be able to batch store the vote accounts later for improved performance/cache updating
     fn calc_vote_accounts_to_store(
-        vote_account_rewards: impl IntoIterator<Item = VoteRewards>,
+        vote_account_rewards: VoteRewards,
         len: usize,
     ) -> VoteRewardsAccounts {
         let mut result = VoteRewardsAccounts {
             accounts_with_rewards: Vec::with_capacity(len),
             total_vote_rewards_lamports: 0,
         };
-        vote_account_rewards.into_iter().flatten().for_each(
+        vote_account_rewards.into_iter().for_each(
             |(
                 vote_pubkey,
                 VoteReward {
