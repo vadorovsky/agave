@@ -357,19 +357,25 @@ impl Bank {
             num_workers, // shard amount
         );
 
-        let (_, measure_stake_rewards_us) = measure_us!(solana_perf::thread_pool::scope(
-            "solStkRwrds",
-            num_workers,
-            &stake_delegations,
-            random_state,
-            |stake_delegations| {
-                let vote_account_rewards_len = Arc::clone(&vote_account_rewards_len);
-                let total_stake_rewards = Arc::clone(&total_stake_rewards);
-                let reward_calc_tracer = Arc::clone(&reward_calc_tracer);
-                let stake_rewards = Arc::clone(&stake_rewards);
-                let point_value = point_value.clone();
+        let thread_pool =
+            solana_perf::thread_pool::ThreadPool::new("solStkRwrds", num_workers, 10_000);
 
-                for (stake_pubkey, stake_account) in stake_delegations {
+        let (_, measure_stake_rewards_us) = measure_us!(thread_pool.scope(|s| {
+            for (stake_pubkey, stake_account) in stake_delegations {
+                // Send the current stake delegation to a thread, whose index is
+                // determined by the vote account hash - the same one that the
+                // `vote_account_rewards` dash map uses. This way we make sure
+                // that dash map is never actually locked.
+                let vote_pubkey = stake_account.delegation().voter_pubkey;
+                let thread_index = vote_account_rewards.hash_usize(&vote_pubkey) % num_workers;
+
+                s.spawn(thread_index, || {
+                    let vote_account_rewards_len = Arc::clone(&vote_account_rewards_len);
+                    let total_stake_rewards = Arc::clone(&total_stake_rewards);
+                    let reward_calc_tracer = Arc::clone(&reward_calc_tracer);
+                    let stake_rewards = Arc::clone(&stake_rewards);
+                    let point_value = point_value.clone();
+
                     // curry closure to add the contextual stake_pubkey
                     let reward_calc_tracer = reward_calc_tracer.as_ref().as_ref().map(|outer| {
                         // inner
@@ -379,7 +385,6 @@ impl Bank {
                     });
 
                     let stake_pubkey = **stake_pubkey;
-                    let vote_pubkey = stake_account.delegation().voter_pubkey;
                     let vote_account_from_cache = cached_vote_accounts.get(&vote_pubkey);
                     if ASSERT_STAKE_CACHE && vote_account_from_cache.is_none() {
                         let account_from_db = self.get_account_with_fixed_root(&vote_pubkey);
@@ -447,9 +452,10 @@ impl Bank {
                             stake_pubkey, redeemed
                         );
                     }
-                }
+                })
+                .unwrap();
             }
-        ));
+        }));
 
         let vote_account_rewards_len = vote_account_rewards_len.load(Relaxed);
 
@@ -870,8 +876,8 @@ mod tests {
         for (i, partition) in received_stake_rewards.iter().enumerate() {
             let expected_partition = &expected_stake_rewards[i];
             assert_eq!(partition.count(), expected_partition.count());
-            for reward in partition {
-                assert!(expected_partition.iter().any(|x| x == reward));
+            for (_, reward) in partition {
+                assert!(expected_partition.iter().any(|(_, x)| { x == reward }));
             }
         }
     }
