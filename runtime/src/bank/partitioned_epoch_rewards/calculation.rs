@@ -351,17 +351,25 @@ impl Bank {
 
         let stake_rewards = Arc::new(BoxcarVec::with_capacity(stake_delegations.len()));
         let estimated_num_vote_accounts = cached_vote_accounts.len();
-        let vote_account_rewards: VoteRewards = DashMap::with_capacity_and_hasher_and_shard_amount(
-            estimated_num_vote_accounts,
-            random_state.clone(),
-            num_workers, // shard amount
-        );
+        let vote_account_rewards: Arc<VoteRewards> =
+            Arc::new(DashMap::with_capacity_and_hasher_and_shard_amount(
+                estimated_num_vote_accounts,
+                random_state.clone(),
+                num_workers, // shard amount
+            ));
 
         let thread_pool =
             solana_perf::thread_pool::ThreadPool::new("solStkRwrds", num_workers, 10_000);
 
         let (_, measure_stake_rewards_us) = measure_us!(thread_pool.scope(|s| {
             for (stake_pubkey, stake_account) in stake_delegations {
+                let vote_account_rewards_len = Arc::clone(&vote_account_rewards_len);
+                let total_stake_rewards = Arc::clone(&total_stake_rewards);
+                let reward_calc_tracer = Arc::clone(&reward_calc_tracer);
+                let stake_rewards = Arc::clone(&stake_rewards);
+                let point_value = point_value.clone();
+                let vote_account_rewards = Arc::clone(&vote_account_rewards);
+
                 // Send the current stake delegation to a thread, whose index is
                 // determined by the vote account hash - the same one that the
                 // `vote_account_rewards` dash map uses. This way we make sure
@@ -369,13 +377,7 @@ impl Bank {
                 let vote_pubkey = stake_account.delegation().voter_pubkey;
                 let thread_index = vote_account_rewards.hash_usize(&vote_pubkey) % num_workers;
 
-                s.spawn(thread_index, || {
-                    let vote_account_rewards_len = Arc::clone(&vote_account_rewards_len);
-                    let total_stake_rewards = Arc::clone(&total_stake_rewards);
-                    let reward_calc_tracer = Arc::clone(&reward_calc_tracer);
-                    let stake_rewards = Arc::clone(&stake_rewards);
-                    let point_value = point_value.clone();
-
+                s.spawn(thread_index, move || {
                     // curry closure to add the contextual stake_pubkey
                     let reward_calc_tracer = reward_calc_tracer.as_ref().as_ref().map(|outer| {
                         // inner
@@ -440,12 +442,13 @@ impl Bank {
                         // StakeAccount<Delegation>, which will always only wrap
                         // a `StakeStateV2::Stake` variant.
                         let stake = stake_state.stake().unwrap();
-                        stake_rewards.push(PartitionedStakeReward {
+                        let partitioned_stake_reward = PartitionedStakeReward {
                             stake_pubkey,
                             stake_reward: stakers_reward,
                             stake,
                             commission,
-                        });
+                        };
+                        stake_rewards.push(partitioned_stake_reward);
                     } else {
                         debug!(
                             "redeem_rewards() failed for {}: {:?}",
@@ -458,6 +461,8 @@ impl Bank {
         }));
 
         let vote_account_rewards_len = vote_account_rewards_len.load(Relaxed);
+        let vote_account_rewards = Arc::try_unwrap(vote_account_rewards)
+            .expect("there should be only one strong reference of vote account rewards");
 
         let (vote_rewards, measure_vote_rewards_us) = measure_us!(
             Self::calc_vote_accounts_to_store(vote_account_rewards, vote_account_rewards_len)
