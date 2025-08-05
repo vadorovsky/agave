@@ -11216,7 +11216,7 @@ fn test_system_instruction_unsigned_transaction() {
 #[test]
 fn test_calc_vote_accounts_to_store_empty() {
     let vote_account_rewards = DashMap::default();
-    let result = Bank::calc_vote_accounts_to_store(vote_account_rewards, 0);
+    let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
     assert_eq!(
         result.accounts_with_rewards.len(),
         result.accounts_with_rewards.len()
@@ -11238,7 +11238,7 @@ fn test_calc_vote_accounts_to_store_overflow() {
             vote_rewards: 1, // enough to overflow
         },
     );
-    let result = Bank::calc_vote_accounts_to_store(vote_account_rewards, 1);
+    let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
     assert_eq!(
         result.accounts_with_rewards.len(),
         result.accounts_with_rewards.len()
@@ -11262,7 +11262,7 @@ fn test_calc_vote_accounts_to_store_normal() {
                     vote_rewards,
                 },
             );
-            let result = Bank::calc_vote_accounts_to_store(vote_account_rewards, 1);
+            let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
             assert_eq!(
                 result.accounts_with_rewards.len(),
                 result.accounts_with_rewards.len()

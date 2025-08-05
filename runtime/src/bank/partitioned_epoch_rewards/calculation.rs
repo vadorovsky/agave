@@ -34,7 +34,7 @@ use {
     solana_vote::vote_account::VoteAccount,
     solana_vote_program::vote_state::VoteStateVersions,
     std::sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
+        atomic::{AtomicU64, Ordering::Relaxed},
         Arc,
     },
 };
@@ -340,7 +340,6 @@ impl Bank {
 
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
 
-        let vote_account_rewards_len = Arc::new(AtomicUsize::default());
         let total_stake_rewards = Arc::new(AtomicU64::default());
         let reward_calc_tracer = Arc::new(reward_calc_tracer);
         const ASSERT_STAKE_CACHE: bool = false; // Turn this on to assert that all vote accounts are in the cache
@@ -363,7 +362,6 @@ impl Bank {
 
         let (_, measure_stake_rewards_us) = measure_us!(thread_pool.scope(|s| {
             for (stake_pubkey, stake_account) in stake_delegations {
-                let vote_account_rewards_len = Arc::clone(&vote_account_rewards_len);
                 let total_stake_rewards = Arc::clone(&total_stake_rewards);
                 let reward_calc_tracer = Arc::clone(&reward_calc_tracer);
                 let stake_rewards = Arc::clone(&stake_rewards);
@@ -422,14 +420,12 @@ impl Bank {
                         let commission = vote_state_view.commission();
 
                         // track voter rewards
-                        let mut voters_reward_entry =
-                            vote_account_rewards.entry(vote_pubkey).or_insert_with(|| {
-                                vote_account_rewards_len.fetch_add(1, Relaxed);
-                                VoteReward {
-                                    commission,
-                                    vote_account: vote_account.into(),
-                                    vote_rewards: 0,
-                                }
+                        let mut voters_reward_entry = vote_account_rewards
+                            .entry(vote_pubkey)
+                            .or_insert_with(|| VoteReward {
+                                commission,
+                                vote_account: vote_account.into(),
+                                vote_rewards: 0,
                             });
 
                         voters_reward_entry.vote_rewards = voters_reward_entry
@@ -460,13 +456,11 @@ impl Bank {
             }
         }));
 
-        let vote_account_rewards_len = vote_account_rewards_len.load(Relaxed);
         let vote_account_rewards = Arc::try_unwrap(vote_account_rewards)
             .expect("there should be only one strong reference of vote account rewards");
 
-        let (vote_rewards, measure_vote_rewards_us) = measure_us!(
-            Self::calc_vote_accounts_to_store(vote_account_rewards, vote_account_rewards_len)
-        );
+        let (vote_rewards, measure_vote_rewards_us) =
+            measure_us!(Self::calc_vote_accounts_to_store(vote_account_rewards));
 
         metrics.redeem_rewards_us += measure_stake_rewards_us + measure_vote_rewards_us;
 
