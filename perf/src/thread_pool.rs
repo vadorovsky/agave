@@ -23,18 +23,27 @@ struct ThreadPoolState {
 
 impl ThreadPoolState {
     #[inline]
-    fn has_pending_jobs(&self) -> bool {
-        self.pending.load(Ordering::Relaxed) > 0
+    pub fn submit(&self) {
+        self.pending.fetch_add(1, Ordering::SeqCst);
     }
 
     #[inline]
-    fn join(&self) {
-        if !self.has_pending_jobs() {
-            return;
-        }
+    pub fn complete(&self) {
+        // Mark the current job complete.
+        let pending_old = self.pending.fetch_sub(1, Ordering::SeqCst);
 
+        // If that was the last job, wake joiners.
+        if pending_old == 1 {
+            let _guard = self.join_lock.lock().unwrap();
+            self.join_cvar.notify_one()
+        }
+    }
+
+    #[inline]
+    pub fn join(&self) {
         let mut lock = self.join_lock.lock().unwrap();
-        while self.has_pending_jobs() {
+
+        while self.pending.load(Ordering::SeqCst) > 0 {
             lock = self.join_cvar.wait(lock).unwrap();
         }
     }
@@ -76,14 +85,9 @@ impl ThreadPool {
                             match msg {
                                 Message::Job(job) => {
                                     let _ = catch_unwind(AssertUnwindSafe(|| job()));
+                                    pool_state.complete();
                                 }
                                 Message::Stop => break,
-                            }
-
-                            pool_state.pending.fetch_sub(1, Ordering::Relaxed);
-                            if !pool_state.has_pending_jobs() {
-                                let _guard = pool_state.join_lock.lock().unwrap();
-                                pool_state.join_cvar.notify_one();
                             }
                         }
                     })
@@ -141,7 +145,7 @@ impl<'scope> Scope<'_, 'scope> {
             ThreadPoolError::ThreadIxOutOfBounds(thread_index, self.pool.workers.len())
         })?;
 
-        self.pool.pool_state.pending.fetch_add(1, Ordering::Relaxed);
+        self.pool.pool_state.submit();
 
         // SAFETY: The receivers of the workers channels are owned by threads.
         // That leads into the requirement of every element sent through these
