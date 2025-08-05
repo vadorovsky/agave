@@ -84,7 +84,7 @@ impl ThreadPool {
                         for msg in receiver {
                             match msg {
                                 Message::Job(job) => {
-                                    let _ = catch_unwind(AssertUnwindSafe(|| job()));
+                                    let _ = catch_unwind(AssertUnwindSafe(job));
                                     pool_state.complete();
                                 }
                                 Message::Stop => break,
@@ -141,6 +141,8 @@ impl<'scope> Scope<'_, 'scope> {
     where
         F: FnOnce() + Send + 'scope,
     {
+        // This lazy evaluation avoids calling `len()` every time.
+        #[allow(clippy::unnecessary_lazy_evaluations)]
         let sender = self.pool.senders.get(thread_index).ok_or_else(|| {
             ThreadPoolError::ThreadIxOutOfBounds(thread_index, self.pool.workers.len())
         })?;
