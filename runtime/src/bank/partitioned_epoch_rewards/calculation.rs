@@ -354,7 +354,7 @@ impl Bank {
             Arc::new(DashMap::with_capacity_and_hasher_and_shard_amount(
                 estimated_num_vote_accounts,
                 random_state.clone(),
-                num_workers, // shard amount
+                num_workers.next_power_of_two(), // shard amount
             ));
 
         let thread_pool =
