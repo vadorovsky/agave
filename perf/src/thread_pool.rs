@@ -9,7 +9,8 @@ use {
             atomic::{AtomicUsize, Ordering},
             Arc, Condvar, Mutex,
         },
-        thread::{self, JoinHandle},
+        thread::{self, sleep, JoinHandle},
+        time::Duration,
     },
     thiserror::Error,
 };
@@ -80,8 +81,8 @@ impl ThreadPool {
                 let pool_state = Arc::clone(&pool_state);
                 let worker = thread::Builder::new()
                     .name(format!("{name}{i:02}"))
-                    .spawn(move || {
-                        for msg in receiver {
+                    .spawn(move || loop {
+                        if let Ok(msg) = receiver.try_recv() {
                             match msg {
                                 Message::Job(job) => {
                                     let _ = catch_unwind(AssertUnwindSafe(job));
@@ -89,6 +90,8 @@ impl ThreadPool {
                                 }
                                 Message::Stop => break,
                             }
+                        } else {
+                            sleep(Duration::from_millis(1));
                         }
                     })
                     .unwrap();
