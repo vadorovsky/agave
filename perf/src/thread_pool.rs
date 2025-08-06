@@ -82,6 +82,7 @@ impl ThreadPool {
                 let worker = thread::Builder::new()
                     .name(format!("{name}{i:02}"))
                     .spawn(move || loop {
+                        const RECV_TIMEOUT: Duration = Duration::from_nanos(1000);
                         if let Ok(msg) = receiver.try_recv() {
                             match msg {
                                 Message::Job(job) => {
@@ -91,7 +92,7 @@ impl ThreadPool {
                                 Message::Stop => break,
                             }
                         } else {
-                            sleep(Duration::from_millis(1));
+                            sleep(RECV_TIMEOUT);
                         }
                     })
                     .unwrap();
