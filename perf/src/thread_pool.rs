@@ -7,7 +7,7 @@ use {
         panic::{catch_unwind, AssertUnwindSafe},
         sync::{
             atomic::{AtomicUsize, Ordering},
-            Arc, Condvar, Mutex,
+            Arc,
         },
         thread::{self, sleep, JoinHandle},
         time::Duration,
@@ -18,8 +18,6 @@ use {
 #[derive(Default)]
 struct ThreadPoolState {
     pending: AtomicUsize,
-    join_lock: Mutex<()>,
-    join_cvar: Condvar,
 }
 
 impl ThreadPoolState {
@@ -30,22 +28,14 @@ impl ThreadPoolState {
 
     #[inline]
     pub fn complete(&self) {
-        // Mark the current job complete.
-        let pending_old = self.pending.fetch_sub(1, Ordering::SeqCst);
-
-        // If that was the last job, wake joiners.
-        if pending_old == 1 {
-            let _guard = self.join_lock.lock().unwrap();
-            self.join_cvar.notify_one()
-        }
+        self.pending.fetch_sub(1, Ordering::SeqCst);
     }
 
     #[inline]
     pub fn join(&self) {
-        let mut lock = self.join_lock.lock().unwrap();
-
+        const JOIN_TIMEOUT: Duration = Duration::from_micros(500);
         while self.pending.load(Ordering::SeqCst) > 0 {
-            lock = self.join_cvar.wait(lock).unwrap();
+            sleep(JOIN_TIMEOUT);
         }
     }
 }
@@ -82,7 +72,7 @@ impl ThreadPool {
                 let worker = thread::Builder::new()
                     .name(format!("{name}{i:02}"))
                     .spawn(move || loop {
-                        const RECV_TIMEOUT: Duration = Duration::from_nanos(1000);
+                        const RECV_TIMEOUT: Duration = Duration::from_micros(500);
                         if let Ok(msg) = receiver.try_recv() {
                             match msg {
                                 Message::Job(job) => {
