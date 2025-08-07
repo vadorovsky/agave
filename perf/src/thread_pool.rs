@@ -1,5 +1,5 @@
 use {
-    crossbeam_channel::{bounded, Sender},
+    crossbeam_channel::{bounded, Sender, TrySendError},
     std::{
         fmt,
         marker::PhantomData,
@@ -151,7 +151,20 @@ impl<'scope> Scope<'_, 'scope> {
         // outlive the scope and we can guarantee the 'scope lifetime of the
         // job to the caller.
         let f = unsafe { mem::transmute::<Job<'scope>, Job<'static>>(Box::new(f)) };
-        sender.send(Message::Job(f)).unwrap();
+        let mut msg = Message::Job(f);
+        const SEND_TIMEOUT: Duration = Duration::from_micros(500);
+
+        while let Err(e) = sender.try_send(msg) {
+            msg = match e {
+                TrySendError::Disconnected(_) => {
+                    unreachable!("channels should not disconnect before the scope is dropped")
+                }
+                TrySendError::Full(inner) => {
+                    sleep(SEND_TIMEOUT);
+                    inner
+                }
+            };
+        }
 
         Ok(())
     }
