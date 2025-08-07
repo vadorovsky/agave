@@ -357,8 +357,13 @@ impl Bank {
                 num_workers.next_power_of_two(), // shard amount
             ));
 
-        let thread_pool =
-            solana_perf::thread_pool::ThreadPool::new("solStkRwrds", num_workers, 10_000);
+        let thread_pool = solana_perf::thread_pool::ThreadPool::new(
+            "solStkRwrds",
+            num_workers,
+            // Divide the total amount of delegations by number of workers,
+            // then assume that a worker might do 50% more work than expected.
+            (stake_delegations.len() / num_workers) * 3 / 2,
+        );
 
         let (_, measure_stake_rewards_us) = measure_us!(thread_pool.scope(|s| {
             for (stake_pubkey, stake_account) in stake_delegations {
