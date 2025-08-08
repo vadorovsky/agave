@@ -61,7 +61,7 @@ use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
-    ahash::{AHashSet, RandomState},
+    ahash::AHashSet,
     dashmap::DashMap,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
@@ -121,7 +121,7 @@ use {
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
     },
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_rent_collector::RentCollector,
     solana_reward_info::RewardInfo,
     solana_runtime_transaction::{
@@ -925,7 +925,7 @@ struct VoteReward {
     vote_rewards: u64,
 }
 
-type VoteRewards = DashMap<Pubkey, VoteReward, RandomState>;
+type VoteRewards = HashMap<Pubkey, VoteReward, PubkeyHasherBuilder>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
