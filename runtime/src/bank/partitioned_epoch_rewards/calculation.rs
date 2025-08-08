@@ -354,7 +354,7 @@ impl Bank {
             Arc::new(DashMap::with_capacity_and_hasher_and_shard_amount(
                 estimated_num_vote_accounts,
                 random_state.clone(),
-                num_workers.next_power_of_two(), // shard amount
+                1024, // shard amount
             ));
 
         let thread_pool = solana_perf::thread_pool::ThreadPool::new(
@@ -378,7 +378,9 @@ impl Bank {
                 // `vote_account_rewards` dash map uses. This way we make sure
                 // that dash map is never actually locked.
                 let vote_pubkey = stake_account.delegation().voter_pubkey;
-                let thread_index = vote_account_rewards.hash_usize(&vote_pubkey) % num_workers;
+                let vote_account_hash = vote_account_rewards.hash_usize(&vote_pubkey);
+                let thread_index =
+                    vote_account_rewards.determine_shard(vote_account_hash) % num_workers;
 
                 s.spawn(thread_index, move || {
                     // curry closure to add the contextual stake_pubkey
