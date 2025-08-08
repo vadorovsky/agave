@@ -18,8 +18,6 @@ use {
         stake_account::StakeAccount,
         stakes::Stakes,
     },
-    ahash::random_state::RandomState as AHashRandomState,
-    dashmap::DashMap,
     log::{debug, info},
     rayon::{
         iter::{IntoParallelRefIterator, ParallelIterator},
@@ -27,15 +25,18 @@ use {
     },
     solana_account::ReadableAccount,
     solana_clock::{Epoch, Slot},
-    solana_measure::measure_us,
-    solana_pubkey::Pubkey,
+    solana_measure::{measure::Measure, measure_us},
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_stake_interface::state::Delegation,
     solana_sysvar::epoch_rewards::EpochRewards,
     solana_vote::vote_account::VoteAccount,
     solana_vote_program::vote_state::VoteStateVersions,
-    std::sync::{
-        atomic::{AtomicU64, Ordering::Relaxed},
-        Arc,
+    std::{
+        collections::HashMap,
+        sync::{
+            atomic::{AtomicU64, Ordering::Relaxed},
+            Arc,
+        },
     },
 };
 
@@ -342,15 +343,11 @@ impl Bank {
 
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let estimated_num_vote_accounts = cached_vote_accounts.len();
-        let vote_account_rewards: VoteRewards = DashMap::with_capacity_and_hasher_and_shard_amount(
-            estimated_num_vote_accounts,
-            AHashRandomState::default(),
-            1024, // shard amount
-        );
 
+        let mut measure_stake_rewards = Measure::start("stake_rewards");
         let total_stake_rewards = AtomicU64::default();
         const ASSERT_STAKE_CACHE: bool = false; // Turn this on to assert that all vote accounts are in the cache
-        let (stake_rewards, measure_stake_rewards_us) = measure_us!(thread_pool.install(|| {
+        let (stake_rewards, vote_rewards) = thread_pool.install(|| {
             stake_delegations
                 .par_iter()
                 .filter_map(|(stake_pubkey, stake_account)| {
@@ -396,31 +393,21 @@ impl Bank {
                     if let Ok((stakers_reward, voters_reward)) = redeemed {
                         let commission = vote_state_view.commission();
 
-                        // track voter rewards
-                        let mut voters_reward_entry = vote_account_rewards
-                            .entry(vote_pubkey)
-                            .or_insert(VoteReward {
-                                commission,
-                                vote_account: vote_account.into(),
-                                vote_rewards: 0,
-                            });
-
-                        voters_reward_entry.vote_rewards = voters_reward_entry
-                            .vote_rewards
-                            .saturating_add(voters_reward);
-
                         total_stake_rewards.fetch_add(stakers_reward, Relaxed);
 
                         // Safe to unwrap because all stake_delegations are type
                         // StakeAccount<Delegation>, which will always only wrap
                         // a `StakeStateV2::Stake` variant.
                         let stake = stake_state.stake().unwrap();
-                        return Some(PartitionedStakeReward {
-                            stake_pubkey,
-                            stake_reward: stakers_reward,
-                            stake,
-                            commission,
-                        });
+                        return Some((
+                            PartitionedStakeReward {
+                                stake_pubkey,
+                                stake_reward: stakers_reward,
+                                stake,
+                                commission,
+                            },
+                            (stake_account, vote_account, commission, voters_reward),
+                        ));
                     } else {
                         debug!(
                             "redeem_rewards() failed for {}: {:?}",
@@ -429,12 +416,32 @@ impl Bank {
                     }
                     None
                 })
-                .collect()
-        }));
-        let (vote_rewards, measure_vote_rewards_us) =
-            measure_us!(Self::calc_vote_accounts_to_store(vote_account_rewards));
+                .collect::<(Vec<_>, Vec<_>)>()
+        });
 
-        metrics.redeem_rewards_us += measure_stake_rewards_us + measure_vote_rewards_us;
+        let mut vote_account_rewards: VoteRewards = HashMap::with_capacity_and_hasher(
+            estimated_num_vote_accounts,
+            PubkeyHasherBuilder::default(),
+        );
+        for (stake_account, vote_account, commission, voters_reward) in vote_rewards.into_iter() {
+            let vote_pubkey = stake_account.delegation().voter_pubkey;
+            let voters_reward_entry =
+                vote_account_rewards
+                    .entry(vote_pubkey)
+                    .or_insert_with(|| VoteReward {
+                        vote_account: vote_account.into(),
+                        commission,
+                        vote_rewards: 0,
+                    });
+            voters_reward_entry.vote_rewards = voters_reward_entry
+                .vote_rewards
+                .saturating_add(voters_reward);
+        }
+
+        let vote_rewards = Self::calc_vote_accounts_to_store(vote_account_rewards);
+
+        measure_stake_rewards.stop();
+        metrics.redeem_rewards_us += measure_stake_rewards.as_us();
 
         (
             vote_rewards,
