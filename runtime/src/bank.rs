@@ -925,7 +925,7 @@ struct VoteReward {
     vote_rewards: u64,
 }
 
-type VoteRewards = DashMap<Pubkey, VoteReward, RandomState>;
+type VoteRewards = HashMap<Pubkey, VoteReward, RandomState>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
@@ -1858,7 +1858,7 @@ impl Bank {
             .thread_name(|i| format!("solBnkNewFlds{i:02}"))
             .build()
             .expect("new rayon threadpool");
-        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
+        bank.recalculate_partitioned_rewards(null_tracer());
 
         bank.finish_init(
             genesis_config,

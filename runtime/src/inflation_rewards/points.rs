@@ -7,7 +7,7 @@ use {
     solana_stake_program::stake_state::{Delegation, Stake, StakeStateV2},
     solana_sysvar::stake_history::StakeHistory,
     solana_vote::vote_state_view::VoteStateView,
-    std::cmp::Ordering,
+    std::{cmp::Ordering, collections::HashMap},
 };
 
 /// captures a rewards round as lamports to be awarded
@@ -157,13 +157,17 @@ pub(crate) fn calculate_stake_points_and_credits(
     let mut points = 0;
     let mut new_credits_observed = credits_in_stake;
 
+    let mut stake_cache = HashMap::new();
+
     for epoch_credits_item in new_vote_state.epoch_credits_iter() {
         let (epoch, final_epoch_credits, initial_epoch_credits) = epoch_credits_item.into();
-        let stake_amount = u128::from(stake.delegation.stake(
-            epoch,
-            stake_history,
-            new_rate_activation_epoch,
-        ));
+        let stake_amount = *stake_cache.entry(epoch).or_insert_with(|| {
+            u128::from(
+                stake
+                    .delegation
+                    .stake(epoch, stake_history, new_rate_activation_epoch),
+            )
+        });
 
         // figure out how much this stake has seen that
         //   for which the vote account has a record
