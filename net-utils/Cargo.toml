@@ -18,7 +18,10 @@ name = "solana_net_utils"
 [features]
 default = []
 dev-context-only-utils = ["dep:pcap-file", "dep:hxdmp"]
-shuttle-test=["dep:shuttle"]
+shuttle-test=[
+  "dep:shuttle",
+  "solana-svm-type-overrides/shuttle-test"
+]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -35,6 +38,7 @@ serde = { workspace = true }
 serde_derive = { workspace = true }
 socket2 = { workspace = true }
 solana-serde = { workspace = true }
+solana-svm-type-overrides = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
 shuttle = { workspace = true, optional=true }
