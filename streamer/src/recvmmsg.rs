@@ -13,58 +13,36 @@ use {
 };
 use {
     arrayvec::ArrayVec,
-    solana_perf::packet::{bytes::BytesMut, PACKETS_PER_BATCH, PACKET_DATA_SIZE},
+    solana_perf::packet::{
+        bytes::BytesMut, BytesPacket, BytesPacketBatch, Meta, PACKETS_PER_BATCH, PACKET_DATA_SIZE,
+    },
     std::{
         io,
         net::{SocketAddr, UdpSocket},
         ops::{Deref, DerefMut},
+        slice::ChunksMut,
     },
 };
 
-/// Buffer type used for receiving messages.
-pub struct RecvBuffer(BytesMut);
-
-impl RecvBuffer {
-    pub fn new() -> Self {
-        let buffer = BytesMut::zeroed(PACKETS_PER_BATCH * PACKET_DATA_SIZE);
-        Self(buffer)
-    }
-
-    /// Returns mutable chunks of the buffer, each of them of length
-    /// `PACKET_DATA_SIZE`.
-    pub fn chunk_bufs(&mut self) -> Vec<&mut [u8]> {
-        self.0.chunks_mut(PACKET_DATA_SIZE).collect()
-    }
-
-    /// Reserves capacity of at least additional bytes needed for receiving the
-    /// packet batch with `batch_size` specified the buffer was created.
-    ///
-    /// Intended to be used after all the received packets were split off from
-    /// the buffer and you want to reuse it for receiving the next batch.
-    pub fn reserve(&mut self) {
-        self.0.reserve(PACKETS_PER_BATCH * PACKET_DATA_SIZE)
-    }
-}
-
-impl Default for RecvBuffer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Deref for RecvBuffer {
-    type Target = BytesMut;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for RecvBuffer {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
+// impl Default for RecvBuffer {
+//     fn default() -> Self {
+//         Self::new()
+//     }
+// }
+//
+// impl Deref for RecvBuffer {
+//     type Target = BytesMut;
+//
+//     fn deref(&self) -> &Self::Target {
+//         &self.0
+//     }
+// }
+//
+// impl DerefMut for RecvBuffer {
+//     fn deref_mut(&mut self) -> &mut Self::Target {
+//         &mut self.0
+//     }
+// }
 
 /// Metadata about a message received by the `recvmmsg` syscall.
 pub struct RecvMeta {
@@ -86,32 +64,70 @@ impl RecvMeta {
     }
 }
 
-/// Collection of message metadatas.
-pub struct RecvMetas(ArrayVec<RecvMeta, PACKETS_PER_BATCH>);
+/// Buffer type used for receiving messages.
+pub struct RecvBuffer {
+    buffer: BytesMut,
+    iovs: [MaybeUninit<iovec>; PACKETS_PER_BATCH],
+    addrs: [MaybeUninit<sockaddr_storage>; PACKETS_PER_BATCH],
+    hdrs: [MaybeUninit<mmsghdr>; PACKETS_PER_BATCH],
+}
 
-impl RecvMetas {
+impl RecvBuffer {
     pub fn new() -> Self {
-        Self(ArrayVec::new())
+        let buffer = BytesMut::zeroed(PACKETS_PER_BATCH * PACKET_DATA_SIZE);
+        let mut iovs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
+        let mut addrs = [MaybeUninit::zeroed(); PACKETS_PER_BATCH];
+        let mut hdrs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
+        Self {
+            buffer,
+            iovs,
+            addrs,
+            hdrs,
+        }
     }
-}
 
-impl Default for RecvMetas {
-    fn default() -> Self {
-        Self::new()
+    /// Returns mutable chunks of the buffer, each of them of length
+    /// `PACKET_DATA_SIZE`.
+    pub fn chunk_mut<'a>(&mut self, from: usize) -> ChunksMut<'a, Bytes> {
+        izip!(
+            self.buffer.chunks_mut(PACKET_DATA_SIZE),
+            self.iovs,
+            self.addr,
+            self.hdrs,
+        )
     }
-}
 
-impl Deref for RecvMetas {
-    type Target = ArrayVec<RecvMeta, PACKETS_PER_BATCH>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    /// Reserves capacity of at least additional bytes needed for receiving the
+    /// packet batch with `batch_size` specified the buffer was created.
+    ///
+    /// Intended to be used after all the received packets were split off from
+    /// the buffer and you want to reuse it for receiving the next batch.
+    pub fn clear(&mut self) {
+        self.buffer.reserve(PACKETS_PER_BATCH * PACKET_DATA_SIZE);
+        self.metas.clear();
     }
-}
 
-impl DerefMut for RecvMetas {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+    pub fn packet_batch(&mut self) -> BytesPacketBatch {
+        self.metas
+            .iter()
+            .map(|recv_meta| {
+                // Split off a chunk with the full packet capacity.
+                let mut chunk = self.buffer.split_to(PACKET_DATA_SIZE).freeze();
+                // Truncate it to the length of the received message.
+                chunk.truncate(recv_meta.size());
+
+                let mut meta = Meta {
+                    size: chunk.len(),
+                    ..Default::default()
+                };
+                if let Some(socket_addr) = recv_meta.socket_addr() {
+                    meta.set_socket_addr(&socket_addr);
+                }
+                meta.set_from_staked_node(is_staked_service);
+
+                BytesPacket::new(chunk, meta)
+            })
+            .collect()
     }
 }
 
@@ -192,11 +208,7 @@ this function
  prior to calling this function if you require this to actually time out after 1 second.
 */
 #[cfg(target_os = "linux")]
-pub fn recv_mmsg(
-    socket: &UdpSocket,
-    buffers: &mut [&mut [u8]],
-    metas: &mut RecvMetas,
-) -> io::Result<usize> {
+pub fn recv_mmsg(socket: &UdpSocket, buffers: &mut [&mut [u8]]) -> io::Result<usize> {
     const SOCKADDR_STORAGE_SIZE: socklen_t = mem::size_of::<sockaddr_storage>() as socklen_t;
 
     let mut iovs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
@@ -325,7 +337,7 @@ mod tests {
             let mut buffer = RecvBuffer::new();
             let mut buffers = buffer.chunk_bufs();
             let mut metas = RecvMetas::new();
-            let recv = recv_mmsg(&reader, &mut buffers[..], &mut metas).unwrap();
+            let recv = recv_mmsg(&reader, &mut buffers[..]).unwrap();
             assert_eq!(sent, recv);
             for (buffer, meta) in izip!(buffers.iter(), metas.iter()).take(recv) {
                 assert_eq!(buffer.len(), PACKET_DATA_SIZE);
@@ -353,7 +365,7 @@ mod tests {
             let mut buffer = RecvBuffer::new();
             let mut buffers = buffer.chunk_bufs();
             let mut metas = RecvMetas::new();
-            let recv = recv_mmsg(&reader, &mut buffers[..], &mut metas).unwrap();
+            let recv = recv_mmsg(&reader, &mut buffers[..]).unwrap();
             assert_eq!(PACKETS_PER_BATCH, recv);
             for (buffer, meta) in izip!(buffers.iter(), metas.iter()).take(recv) {
                 assert_eq!(buffer.len(), PACKET_DATA_SIZE);
@@ -361,7 +373,7 @@ mod tests {
             }
 
             metas.clear();
-            let recv = recv_mmsg(&reader, &mut buffers[..], &mut metas).unwrap();
+            let recv = recv_mmsg(&reader, &mut buffers[..]).unwrap();
             assert_eq!(sent - PACKETS_PER_BATCH, recv);
             for (buffer, meta) in izip!(buffers.iter(), metas.iter()).take(recv) {
                 assert_eq!(buffer.len(), PACKET_DATA_SIZE);
@@ -391,9 +403,8 @@ mod tests {
 
         let mut buffer = RecvBuffer::new();
         let mut buffers = buffer.chunk_bufs();
-        let mut metas = RecvMetas::new();
         let start = Instant::now();
-        let recv = recv_mmsg(&reader, &mut buffers[..], &mut metas).unwrap();
+        let recv = recv_mmsg(&reader, &mut buffers[..]).unwrap();
         assert_eq!(PACKETS_PER_BATCH, recv);
         for (buffer, meta) in izip!(buffers.iter(), metas.iter()).take(recv) {
             assert_eq!(buffer.len(), PACKET_DATA_SIZE);
@@ -401,7 +412,7 @@ mod tests {
         }
         reader.set_nonblocking(true).unwrap();
 
-        let _recv = recv_mmsg(&reader, &mut buffers[..], &mut metas);
+        let _recv = recv_mmsg(&reader, &mut buffers[..]);
         assert!(start.elapsed().as_secs() < 5);
     }
 
@@ -437,9 +448,8 @@ mod tests {
 
         let mut buffer = RecvBuffer::new();
         let mut buffers = buffer.chunk_bufs();
-        let mut metas = RecvMetas::new();
 
-        let recv = recv_mmsg(&reader, &mut buffers[..], &mut metas).unwrap();
+        let recv = recv_mmsg(&reader, &mut buffers[..]).unwrap();
         assert_eq!(PACKETS_PER_BATCH, recv);
         for (buffer, meta) in izip!(buffers.iter(), metas.iter()).take(sent1) {
             assert_eq!(buffer.len(), PACKET_DATA_SIZE);
@@ -453,8 +463,8 @@ mod tests {
             assert_eq!(meta.socket_addr(), Some(sender_addr));
         }
 
-        metas.clear();
-        let recv = recv_mmsg(&reader, &mut buffers[..], &mut metas).unwrap();
+        buffers.clear();
+        let recv = recv_mmsg(&reader, &mut buffers[..]).unwrap();
         assert_eq!(sent1 + sent2 - PACKETS_PER_BATCH, recv);
         for (buffer, meta) in izip!(buffers.iter(), metas.iter()).take(recv) {
             assert_eq!(buffer.len(), PACKET_DATA_SIZE);

@@ -8,7 +8,7 @@ use {
             SocketProvider,
         },
         packet::{self, PacketBatch, PacketRef, PACKETS_PER_BATCH},
-        recvmmsg::{RecvBuffer, RecvMetas},
+        recvmmsg::RecvBuffer,
         sendmmsg::{batch_send, SendPktsError},
         socket::SocketAddrSpace,
     },
@@ -168,7 +168,6 @@ fn recv_loop<P: SocketProvider>(
     is_staked_service: bool,
 ) -> Result<()> {
     let mut buffer = RecvBuffer::new();
-    let mut metas = RecvMetas::new();
 
     fn setup_socket(socket: &UdpSocket) -> Result<()> {
         // Non-unix implementation may block indefinitely due to its lack of polling support,
@@ -203,9 +202,9 @@ fn recv_loop<P: SocketProvider>(
             }
 
             #[cfg(unix)]
-            let result = packet::recv_from(&mut packet_batch, &socket, coalesce, &mut poll_fd);
+            let result = packet::recv_from(&socket, &mut buffer, coalesce, &mut poll_fd);
             #[cfg(not(unix))]
-            let result = packet::recv_from(&mut packet_batch, &socket, coalesce);
+            let result = packet::recv_from(&socket, &mut buffer, coalesce);
 
             if let Ok(packet_batch) = result {
                 let len = packet_batch.len();
@@ -238,8 +237,7 @@ fn recv_loop<P: SocketProvider>(
                     }
                 }
 
-                buffer.reserve();
-                metas.clear();
+                buffer.clear();
                 break;
             }
         }

@@ -9,7 +9,7 @@ use nix::poll::{poll, PollFd, PollTimeout};
 ))]
 use nix::{poll::ppoll, sys::time::TimeSpec};
 use {
-    crate::{recvmmsg::recv_mmsg, socket::SocketAddrSpace},
+    crate::{recvmmsg::recv_mmsg, recvmmsg::RecvBuffer, socket::SocketAddrSpace},
     solana_perf::packet::{BytesPacket, BytesPacketBatch},
     std::{
         io::{ErrorKind, Result},
@@ -37,7 +37,6 @@ This is a wrapper around recvmmsg(7) call.
 pub(crate) fn recv_from(
     socket: &UdpSocket,
     buffer: &mut RecvBuffer,
-    metas: &mut RecvMetas,
     // If max_wait is None, reads from the socket until either:
     //   * 64 packets are read (PACKETS_PER_BATCH == 64), or
     //   * There are no more data available to read from the socket.
@@ -85,27 +84,8 @@ pub(crate) fn recv_from(
         }
     }
 
-    drop(buffers);
-    let packet_batch: BytesPacketBatch = metas
-        .iter()
-        .map(|recv_meta| {
-            // Split off a chunk with the full packet capacity.
-            let mut chunk = buffer.split_to(PACKET_DATA_SIZE).freeze();
-            // Truncate it to the length of the received message.
-            chunk.truncate(recv_meta.size());
-
-            let mut meta = Meta {
-                size: chunk.len(),
-                ..Default::default()
-            };
-            if let Some(socket_addr) = recv_meta.socket_addr() {
-                meta.set_socket_addr(&socket_addr);
-            }
-            meta.set_from_staked_node(is_staked_service);
-
-            BytesPacket::new(chunk, meta)
-        })
-        .collect();
+    // drop(buffers);
+    let packet_batch: BytesPacketBatch = buffer.packet_batch();
 
     Ok(packet_batch)
 }
@@ -115,14 +95,13 @@ pub(crate) fn recv_from(
 #[cfg(unix)]
 pub(crate) fn recv_from(
     socket: &UdpSocket,
-    buffer: &mut RecvBuffer,
-    metas: &mut RecvMetas,
+    buffer: &mut RecvBuff,
     // If max_wait is None, reads from the socket until either:
     //   * 64 packets are read (PACKETS_PER_BATCH == 64), or
     //   * There are no more data available to read from the socket.
     max_wait: Option<Duration>,
     poll_fd: &mut [PollFd],
-) -> Result<usize> {
+) -> Result<BytesPacketBatch> {
     use crate::streamer::SOCKET_READ_TIMEOUT;
 
     // Implementation note:
@@ -160,14 +139,13 @@ pub(crate) fn recv_from(
     fn recv_from_once(
         socket: &UdpSocket,
         buffers: &mut &[&mut [u8]],
-        metas: &mut RecvMetas,
         poll_fd: &mut [PollFd],
     ) -> Result<usize> {
         let mut i = 0;
         let mut did_poll = false;
 
         loop {
-            match recv_mmsg(socket, &mut buffers[i..], metas) {
+            match recv_mmsg(socket, &mut buffers[i..]) {
                 Ok(npkts) => {
                     i += npkts;
                     if i >= PACKETS_PER_BATCH {
@@ -206,7 +184,6 @@ pub(crate) fn recv_from(
     fn recv_from_coalesce(
         socket: &UdpSocket,
         buffers: &mut &[&mut [u8]],
-        metas: &mut RecvMetas,
         max_wait: Duration,
         poll_fd: &mut [PollFd],
     ) -> Result<usize> {
@@ -231,7 +208,7 @@ pub(crate) fn recv_from(
         let deadline = Instant::now() + max_wait;
 
         loop {
-            match recv_mmsg(socket, &mut batch[i..], metas) {
+            match recv_mmsg(socket, &mut batch[i..]) {
                 Ok(npkts) => {
                     i += npkts;
                     if i >= PACKETS_PER_BATCH {
@@ -296,15 +273,18 @@ pub(crate) fn recv_from(
 
     trace!("receiving on {}", socket.local_addr().unwrap());
 
+    let mut buffers = buffer.chunk_bufs();
     let i = match max_wait {
-        Some(max_wait) => recv_from_coalesce(batch, socket, max_wait, poll_fd),
-        None => recv_from_once(batch, socket, poll_fd),
+        Some(max_wait) => recv_from_coalesce(socket, &mut buffers, max_wait, poll_fd),
+        None => recv_from_once(socket, &mut buffers, poll_fd),
     }?;
 
-    batch.truncate(i);
+    drop(buffers);
+    let packet_batch = buffers.packet_batch();
 
-    Ok(i)
+    Ok(packet_batch)
 }
+
 pub fn send_to(
     batch: &PacketBatch,
     socket: &UdpSocket,
@@ -345,8 +325,8 @@ mod tests {
     }
 
     fn recv_from(
-        batch: &mut PinnedPacketBatch,
         socket: &UdpSocket,
+        buffer: &mut RecvBuffer,
         max_wait: Option<Duration>,
     ) -> Result<usize> {
         #[cfg(unix)]
@@ -354,11 +334,11 @@ mod tests {
             use {nix::poll::PollFlags, std::os::fd::AsFd};
 
             let mut poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
-            recv_from_impl(batch, socket, max_wait, &mut poll_fd)
+            recv_from_impl(socket, buffer, max_wait, &mut poll_fd)
         }
         #[cfg(not(unix))]
         {
-            recv_from_impl(batch, socket, max_wait)
+            recv_from_impl(socket, buffer, max_wait)
         }
     }
 
@@ -379,13 +359,10 @@ mod tests {
         send_to(&batch, &send_socket, &SocketAddrSpace::Unspecified).unwrap();
 
         let mut buffer = RecvBuffer::new();
-        let mut metas = RecvMetas::new();
         let recvd = recv_from(
             &recv_socket,
             &mut buffer,
-            &mut metas,
             Some(Duration::from_millis(1)), // max_wait
-            true,
         )
         .unwrap();
         assert_eq!(recvd.len(), batch.len());
@@ -438,13 +415,10 @@ mod tests {
             send_to(&batch, &send_socket, &SocketAddrSpace::Unspecified).unwrap();
         }
         let mut buffer = RecvBuffer::new();
-        let mut metas = RecvMetas::new();
         let recvd = recv_from(
             &recv_socket,
             &mut buffer,
-            &mut metas,
             Some(Duration::from_millis(100)), // max_wait
-            true,
         )
         .unwrap();
         // Check we only got PACKETS_PER_BATCH packets
