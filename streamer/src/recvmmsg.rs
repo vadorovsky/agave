@@ -72,6 +72,15 @@ pub struct RecvBuffer {
     hdrs: [MaybeUninit<mmsghdr>; PACKETS_PER_BATCH],
 }
 
+/// A bundle yielded by the [`RecvBuffer::chunks_mut`] iterator, containing the
+/// buffer and pointers for the `recvmmsg` syscall to fill.
+pub type RecvBufferBundle<'a> = (
+    &'a mut [u8],
+    MaybeUninit<iovec>,
+    MaybeUninit<sockaddr_storage>,
+    MaybeUninit<mmsghdr>,
+);
+
 impl RecvBuffer {
     pub fn new() -> Self {
         let buffer = BytesMut::zeroed(PACKETS_PER_BATCH * PACKET_DATA_SIZE);
@@ -88,11 +97,11 @@ impl RecvBuffer {
 
     /// Returns mutable chunks of the buffer, each of them of length
     /// `PACKET_DATA_SIZE`.
-    pub fn chunk_mut<'a>(&mut self, from: usize) -> ChunksMut<'a, Bytes> {
+    pub fn chunks_mut<'a>(&mut self) -> impl ExactSizeIterator<Item = RecvBufferBundle<'a>> {
         izip!(
             self.buffer.chunks_mut(PACKET_DATA_SIZE),
             self.iovs,
-            self.addr,
+            self.addrs,
             self.hdrs,
         )
     }
@@ -104,10 +113,9 @@ impl RecvBuffer {
     /// the buffer and you want to reuse it for receiving the next batch.
     pub fn clear(&mut self) {
         self.buffer.reserve(PACKETS_PER_BATCH * PACKET_DATA_SIZE);
-        self.metas.clear();
     }
 
-    pub fn packet_batch(&mut self) -> BytesPacketBatch {
+    pub fn packet_batch(&mut self, is_staked_service: bool) -> BytesPacketBatch {
         self.metas
             .iter()
             .map(|recv_meta| {
@@ -208,19 +216,20 @@ this function
  prior to calling this function if you require this to actually time out after 1 second.
 */
 #[cfg(target_os = "linux")]
-pub fn recv_mmsg(socket: &UdpSocket, buffers: &mut [&mut [u8]]) -> io::Result<usize> {
+pub fn recv_mmsg<'a, I>(socket: &UdpSocket, buffers: I) -> io::Result<usize>
+where
+    I: ExactSizeIterator<Item = RecvBufferBundle<'a>>,
+{
     const SOCKADDR_STORAGE_SIZE: socklen_t = mem::size_of::<sockaddr_storage>() as socklen_t;
 
-    let mut iovs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
-    let mut addrs = [MaybeUninit::zeroed(); PACKETS_PER_BATCH];
-    let mut hdrs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
+    // let mut iovs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
+    // let mut addrs = [MaybeUninit::zeroed(); PACKETS_PER_BATCH];
+    // let mut hdrs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
 
     let sock_fd = socket.as_raw_fd();
     let count = buffers.len();
 
-    for (buffer, hdr, iov, addr) in
-        izip!(buffers.iter_mut(), &mut hdrs, &mut iovs, &mut addrs).take(count)
-    {
+    for (buffer, hdr, iov, addr) in buffers.take(count) {
         iov.write(iovec {
             iov_base: buffer.as_mut_ptr() as *mut libc::c_void,
             iov_len: buffer.len(),
@@ -268,7 +277,7 @@ pub fn recv_mmsg(socket: &UdpSocket, buffers: &mut [&mut [u8]]) -> io::Result<us
         let addr = cast_socket_addr(addr_ref, hdr_ref);
         let len = hdr_ref.msg_len as usize;
         let meta = RecvMeta::new(addr, len);
-        metas.push(meta);
+        // metas.push(meta);
     }
 
     for (iov, addr, hdr) in izip!(&mut iovs, &mut addrs, &mut hdrs).take(count) {

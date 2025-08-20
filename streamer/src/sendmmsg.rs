@@ -267,9 +267,8 @@ mod tests {
         batch_send(&sender, packet_refs).unwrap();
 
         let mut buffer = RecvBuffer::new();
-        let mut buffers = buffer.chunk_bufs();
-        let mut metas = RecvMetas::new();
-        let recv = recv_mmsg(&reader, &mut buffers[..], &mut metas).unwrap();
+        let mut buffers = buffer.chunks_mut(0);
+        let recv = recv_mmsg(&reader, &mut buffers[..]).unwrap();
         assert_eq!(32, recv);
     }
 
@@ -299,15 +298,13 @@ mod tests {
         batch_send(&sender, packet_refs).unwrap();
 
         let mut buffer = RecvBuffer::new();
-        let mut buffers = buffer.chunk_bufs();
-        let mut metas = RecvMetas::new();
-        let recv = recv_mmsg(&reader, &mut buffers[..], &mut metas).unwrap();
+        let mut buffers = buffer.chunks_mut(0);
+        let recv = recv_mmsg(&reader, &mut buffers[..]).unwrap();
         assert_eq!(16, recv);
 
         let mut buffer = RecvBuffer::new();
-        let mut buffers = buffer.chunk_bufs();
-        let mut metas = RecvMetas::new();
-        let recv = recv_mmsg(&reader2, &mut buffers[..], &mut metas).unwrap();
+        let mut buffers = buffer.chunks_mut(0);
+        let recv = recv_mmsg(&reader2, &mut buffers[..]).unwrap();
         assert_eq!(16, recv);
     }
 
@@ -337,27 +334,23 @@ mod tests {
         .unwrap();
 
         let mut buffer = RecvBuffer::new();
-        let mut buffers = buffer.chunk_bufs();
-        let mut metas = RecvMetas::new();
-        let recv = recv_mmsg(&reader, &mut buffers[..], &mut metas).unwrap();
+        let mut buffers = buffer.chunks_mut(0);
+        let recv = recv_mmsg(&reader, &mut buffers[..]).unwrap();
         assert_eq!(1, recv);
 
         let mut buffer = RecvBuffer::new();
-        let mut buffers = buffer.chunk_bufs();
-        let mut metas = RecvMetas::new();
-        let recv = recv_mmsg(&reader2, &mut buffers[..], &mut metas).unwrap();
+        let mut buffers = buffer.chunks_mut(0);
+        let recv = recv_mmsg(&reader2, &mut buffers[..]).unwrap();
         assert_eq!(1, recv);
 
         let mut buffer = RecvBuffer::new();
-        let mut buffers = buffer.chunk_bufs();
-        let mut metas = RecvMetas::new();
-        let recv = recv_mmsg(&reader3, &mut buffers[..], &mut metas).unwrap();
+        let mut buffers = buffer.chunks_mut(0);
+        let recv = recv_mmsg(&reader3, &mut buffers[..]).unwrap();
         assert_eq!(1, recv);
 
         let mut buffer = RecvBuffer::new();
-        let mut buffers = buffer.chunk_bufs();
-        let mut metas = RecvMetas::new();
-        let recv = recv_mmsg(&reader4, &mut buffers[..], &mut metas).unwrap();
+        let mut buffers = buffer.chunk_bufs(0);
+        let recv = recv_mmsg(&reader4, &mut buffers[..]).unwrap();
         assert_eq!(1, recv);
     }
 

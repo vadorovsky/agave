@@ -227,9 +227,7 @@ fn recv_loop<P: SocketProvider>(
                     match packet_batch_sender.try_send(packet_batch.into()) {
                         Ok(_) => {}
                         Err(TrySendError::Full(_)) => {
-                            stats
-                                .num_packets_dropped
-                                .fetch_add(metas.len(), Ordering::Relaxed);
+                            stats.num_packets_dropped.fetch_add(len, Ordering::Relaxed);
                         }
                         Err(TrySendError::Disconnected(err)) => {
                             return Err(StreamerError::Send(SendError(err)))

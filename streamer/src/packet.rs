@@ -95,14 +95,14 @@ pub(crate) fn recv_from(
 #[cfg(unix)]
 pub(crate) fn recv_from(
     socket: &UdpSocket,
-    buffer: &mut RecvBuff,
+    buffer: &mut RecvBuffer,
     // If max_wait is None, reads from the socket until either:
     //   * 64 packets are read (PACKETS_PER_BATCH == 64), or
     //   * There are no more data available to read from the socket.
     max_wait: Option<Duration>,
     poll_fd: &mut [PollFd],
 ) -> Result<BytesPacketBatch> {
-    use crate::streamer::SOCKET_READ_TIMEOUT;
+    use crate::{recvmmsg::RecvBufferBundle, streamer::SOCKET_READ_TIMEOUT};
 
     // Implementation note:
     // This is a reimplementation of the above (now, non-unix) `recv_from` function, and
@@ -136,11 +136,14 @@ pub(crate) fn recv_from(
     /// On subsequent iterations, when [`ErrorKind::WouldBlock`] is encountered:
     /// - If any packets were read, the function will exit.
     /// - If no packets were read, the function will return an error.
-    fn recv_from_once(
+    fn recv_from_once<'a, I>(
         socket: &UdpSocket,
         buffers: &mut &[&mut [u8]],
         poll_fd: &mut [PollFd],
-    ) -> Result<usize> {
+    ) -> Result<usize>
+    where
+        I: ExactSizeIterator<Item = RecvBufferBundle<'a>>,
+    {
         let mut i = 0;
         let mut did_poll = false;
 
@@ -181,12 +184,15 @@ pub(crate) fn recv_from(
     ///
     /// On subsequent iterations, when [`ErrorKind::WouldBlock`] is encountered, poll for the
     /// saturating duration since the start of the loop.
-    fn recv_from_coalesce(
+    fn recv_from_coalesce<'a, I>(
         socket: &UdpSocket,
-        buffers: &mut &[&mut [u8]],
+        buffers: I,
         max_wait: Duration,
         poll_fd: &mut [PollFd],
-    ) -> Result<usize> {
+    ) -> Result<usize>
+    where
+        I: ExactSizeIterator<Item = RecvBufferBundle<'a>>,
+    {
         #[cfg(any(
             target_os = "linux",
             target_os = "android",
@@ -208,7 +214,7 @@ pub(crate) fn recv_from(
         let deadline = Instant::now() + max_wait;
 
         loop {
-            match recv_mmsg(socket, &mut batch[i..]) {
+            match recv_mmsg(socket, buffers) {
                 Ok(npkts) => {
                     i += npkts;
                     if i >= PACKETS_PER_BATCH {
@@ -273,14 +279,14 @@ pub(crate) fn recv_from(
 
     trace!("receiving on {}", socket.local_addr().unwrap());
 
-    let mut buffers = buffer.chunk_bufs();
+    let mut buffers = buffer.chunks_mut();
     let i = match max_wait {
         Some(max_wait) => recv_from_coalesce(socket, &mut buffers, max_wait, poll_fd),
         None => recv_from_once(socket, &mut buffers, poll_fd),
     }?;
 
     drop(buffers);
-    let packet_batch = buffers.packet_batch();
+    let packet_batch = buffer.packet_batch(is_staked_service);
 
     Ok(packet_batch)
 }
