@@ -13,11 +13,12 @@ use {
 };
 use {
     arrayvec::ArrayVec,
+    bytes::{buf::UninitSlice, BufMut},
     solana_perf::packet::{
         bytes::BytesMut, BytesPacket, BytesPacketBatch, Meta, PACKETS_PER_BATCH, PACKET_DATA_SIZE,
     },
     std::{
-        io,
+        array, io,
         net::{SocketAddr, UdpSocket},
         ops::{Deref, DerefMut},
         slice::ChunksMut,
@@ -64,6 +65,15 @@ impl RecvMeta {
     }
 }
 
+/// A bundle yielded by the [`RecvBuffer::chunks_mut`] iterator, containing the
+/// buffer and pointers for the `recvmmsg` syscall to fill.
+pub struct RecvBufferBundle<'a> {
+    buffer: &'a mut UninitSlice,
+    iov: &'a mut MaybeUninit<iovec>,
+    addr: &'a mut MaybeUninit<sockaddr_storage>,
+    hdr: &'a mut MaybeUninit<mmsghdr>,
+}
+
 /// Buffer type used for receiving messages.
 pub struct RecvBuffer {
     buffer: BytesMut,
@@ -72,18 +82,9 @@ pub struct RecvBuffer {
     hdrs: [MaybeUninit<mmsghdr>; PACKETS_PER_BATCH],
 }
 
-/// A bundle yielded by the [`RecvBuffer::chunks_mut`] iterator, containing the
-/// buffer and pointers for the `recvmmsg` syscall to fill.
-pub type RecvBufferBundle<'a> = (
-    &'a mut [u8],
-    MaybeUninit<iovec>,
-    MaybeUninit<sockaddr_storage>,
-    MaybeUninit<mmsghdr>,
-);
-
 impl RecvBuffer {
     pub fn new() -> Self {
-        let buffer = BytesMut::zeroed(PACKETS_PER_BATCH * PACKET_DATA_SIZE);
+        let buffer = BytesMut::with_capacity(PACKETS_PER_BATCH * PACKET_DATA_SIZE);
         let mut iovs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
         let mut addrs = [MaybeUninit::zeroed(); PACKETS_PER_BATCH];
         let mut hdrs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
@@ -97,13 +98,21 @@ impl RecvBuffer {
 
     /// Returns mutable chunks of the buffer, each of them of length
     /// `PACKET_DATA_SIZE`.
-    pub fn chunks_mut<'a>(&mut self) -> impl ExactSizeIterator<Item = RecvBufferBundle<'a>> {
-        izip!(
-            self.buffer.chunks_mut(PACKET_DATA_SIZE),
-            self.iovs,
-            self.addrs,
-            self.hdrs,
-        )
+    pub fn chunks_mut<'a>(&mut self) -> [RecvBufferBundle; PACKETS_PER_BATCH] {
+        array::from_fn(|i| {
+            let offset_l = i * PACKET_DATA_SIZE;
+            let offset_r = (i + 1) * PACKET_DATA_SIZE;
+            let buffer = &mut self.buffer.chunk_mut()[offset_l..offset_r];
+            let iov = &mut self.iovs[i];
+            let addr = &mut self.addrs[i];
+            let hdr = &mut self.hdrs[i];
+            RecvBufferBundle {
+                buffer,
+                iov,
+                addr,
+                hdr,
+            }
+        })
     }
 
     /// Reserves capacity of at least additional bytes needed for receiving the
@@ -116,9 +125,8 @@ impl RecvBuffer {
     }
 
     pub fn packet_batch(&mut self, is_staked_service: bool) -> BytesPacketBatch {
-        self.metas
-            .iter()
-            .map(|recv_meta| {
+        izip!(self.iovs, self.addrs, self.hdrs)
+            .map(|(iov, addr, hdr)| {
                 // Split off a chunk with the full packet capacity.
                 let mut chunk = self.buffer.split_to(PACKET_DATA_SIZE).freeze();
                 // Truncate it to the length of the received message.
