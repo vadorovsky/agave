@@ -2,10 +2,11 @@ use {
     crate::rolling_bit_field::RollingBitField,
     core::fmt::{Debug, Formatter},
     solana_clock::Slot,
+    solana_nohash_hasher::BuildNoHashHasher,
     std::collections::HashMap,
 };
 
-pub type AncestorsForSerialization = HashMap<Slot, usize>;
+pub type AncestorsForSerialization = HashMap<Slot, usize, BuildNoHashHasher<Slot>>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, PartialEq)]
