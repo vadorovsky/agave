@@ -432,7 +432,7 @@ impl Bank {
                                 (None, None)
                             }
                         } else {
-                            debug!("could not find vote accout {vote_pubkey} in cache");
+                            debug!("could not find vote account {vote_pubkey} in cache");
                             (None, None)
                         };
                         stake_reward_ref.write(stake_reward);
@@ -523,7 +523,6 @@ impl Bank {
             stake_history,
             stake_delegations,
             cached_vote_accounts,
-            ..
         } = reward_calculate_params;
 
         let solana_vote_program: Pubkey = solana_vote_program::id();
@@ -567,7 +566,7 @@ impl Bank {
         let epoch_rewards_sysvar = self.get_epoch_rewards_sysvar();
         if epoch_rewards_sysvar.active {
             let thread_pool = ThreadPoolBuilder::new()
-                .thread_name(|i| format!("solBnkNewFlds{i:02}"))
+                .thread_name(|i| format!("solRecalcRwrds{i:02}"))
                 .build()
                 .expect("new rayon threadpool");
             let (stake_rewards, partition_indices) = self.recalculate_stake_rewards(
