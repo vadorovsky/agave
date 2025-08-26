@@ -21,7 +21,7 @@ use {
     log::{debug, info},
     rayon::{
         iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
-        ThreadPool, ThreadPoolBuilder,
+        ThreadPool,
     },
     solana_account::ReadableAccount,
     solana_clock::{Epoch, Slot},
@@ -562,17 +562,14 @@ impl Bank {
     pub(in crate::bank) fn recalculate_partitioned_rewards(
         &mut self,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
+        thread_pool: &ThreadPool,
     ) {
         let epoch_rewards_sysvar = self.get_epoch_rewards_sysvar();
         if epoch_rewards_sysvar.active {
-            let thread_pool = ThreadPoolBuilder::new()
-                .thread_name(|i| format!("solRecalcRwrds{i:02}"))
-                .build()
-                .expect("new rayon threadpool");
             let (stake_rewards, partition_indices) = self.recalculate_stake_rewards(
                 &epoch_rewards_sysvar,
                 reward_calc_tracer,
-                &thread_pool,
+                thread_pool,
             );
             self.set_epoch_reward_status_distribution(
                 epoch_rewards_sysvar.distribution_starting_block_height,
@@ -1117,7 +1114,7 @@ mod tests {
             &mut rewards_metrics,
         );
 
-        bank.recalculate_partitioned_rewards(null_tracer());
+        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
         let EpochRewardStatus::Active(EpochRewardPhase::Distribution(
             StartBlockHeightAndPartitionedRewards {
                 distribution_starting_block_height,
@@ -1155,7 +1152,7 @@ mod tests {
         let mut bank =
             Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), SLOTS_PER_EPOCH + 1);
 
-        bank.recalculate_partitioned_rewards(null_tracer());
+        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
         let EpochRewardStatus::Active(EpochRewardPhase::Distribution(
             StartBlockHeightAndPartitionedRewards {
                 distribution_starting_block_height,
@@ -1198,7 +1195,7 @@ mod tests {
         let mut bank =
             Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), SLOTS_PER_EPOCH + 2);
 
-        bank.recalculate_partitioned_rewards(null_tracer());
+        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
         assert_eq!(bank.epoch_reward_status, EpochRewardStatus::Inactive);
     }
 }
