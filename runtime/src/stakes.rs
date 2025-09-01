@@ -4,7 +4,7 @@
 use solana_stake_interface::state::Stake;
 use {
     crate::{stake_account, stake_history::StakeHistory},
-    im::HashMap as ImHashMap,
+    im::OrdMap as ImOrdMap,
     log::error,
     num_derive::ToPrimitive,
     rayon::{prelude::*, ThreadPool},
@@ -162,7 +162,7 @@ pub struct Stakes<T: Clone> {
     vote_accounts: VoteAccounts,
 
     /// stake_delegations
-    stake_delegations: ImHashMap<Pubkey, T>,
+    stake_delegations: ImOrdMap<Pubkey, T>,
 
     /// unused
     unused: u64,
@@ -203,7 +203,7 @@ impl Stakes<StakeAccount> {
             // We use fold/reduce to aggregate the results, which does a bit more work than calling
             // collect()/collect_vec_list() and then im::HashMap::from_iter(collected.into_iter()),
             // but it does it in background threads, so effectively it's faster.
-            .try_fold(ImHashMap::new, |mut map, (pubkey, delegation)| {
+            .try_fold(ImOrdMap::new, |mut map, (pubkey, delegation)| {
                 let Some(stake_account) = get_account(pubkey) else {
                     return Err(Error::StakeAccountNotFound(*pubkey));
                 };
@@ -232,7 +232,7 @@ impl Stakes<StakeAccount> {
                     Err(Error::InvalidDelegation(*pubkey))
                 }
             })
-            .try_reduce(ImHashMap::new, |a, b| Ok(a.union(b)))?;
+            .try_reduce(ImOrdMap::new, |a, b| Ok(a.union(b)))?;
 
         // Assert that cached vote accounts are consistent with accounts-db.
         //
@@ -262,7 +262,7 @@ impl Stakes<StakeAccount> {
     pub fn new_for_tests(
         epoch: Epoch,
         vote_accounts: VoteAccounts,
-        stake_delegations: ImHashMap<Pubkey, StakeAccount>,
+        stake_delegations: ImOrdMap<Pubkey, StakeAccount>,
     ) -> Self {
         Self {
             vote_accounts,
@@ -315,7 +315,7 @@ impl Stakes<StakeAccount> {
 
     /// Sum the stakes that point to the given voter_pubkey
     fn calculate_stake(
-        stake_delegations: &ImHashMap<Pubkey, StakeAccount>,
+        stake_delegations: &ImOrdMap<Pubkey, StakeAccount>,
         voter_pubkey: &Pubkey,
         epoch: Epoch,
         stake_history: &StakeHistory,
@@ -398,7 +398,7 @@ impl Stakes<StakeAccount> {
         }
     }
 
-    pub(crate) fn stake_delegations(&self) -> &ImHashMap<Pubkey, StakeAccount> {
+    pub(crate) fn stake_delegations(&self) -> &ImOrdMap<Pubkey, StakeAccount> {
         &self.stake_delegations
     }
 

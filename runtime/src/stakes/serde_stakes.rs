@@ -1,7 +1,7 @@
 use {
     super::{StakeAccount, Stakes},
     crate::stake_history::StakeHistory,
-    im::HashMap as ImHashMap,
+    im::OrdMap as ImOrdMap,
     serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
@@ -185,7 +185,7 @@ struct SerdeStakeAccountsToStakeFormat {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeMapToDelegationFormat(ImHashMap<Pubkey, Stake>);
+struct SerdeStakeMapToDelegationFormat(ImOrdMap<Pubkey, Stake>);
 impl Serialize for SerdeStakeMapToDelegationFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -200,7 +200,7 @@ impl Serialize for SerdeStakeMapToDelegationFormat {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeAccountMapToDelegationFormat(ImHashMap<Pubkey, StakeAccount>);
+struct SerdeStakeAccountMapToDelegationFormat(ImOrdMap<Pubkey, StakeAccount>);
 impl Serialize for SerdeStakeAccountMapToDelegationFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -215,7 +215,7 @@ impl Serialize for SerdeStakeAccountMapToDelegationFormat {
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-struct SerdeStakeAccountMapToStakeFormat(ImHashMap<Pubkey, StakeAccount>);
+struct SerdeStakeAccountMapToStakeFormat(ImOrdMap<Pubkey, StakeAccount>);
 impl Serialize for SerdeStakeAccountMapToStakeFormat {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn test_serde_stakes_to_stake_format() {
-        let mut stake_delegations = ImHashMap::new();
+        let mut stake_delegations = ImOrdMap::new();
         stake_delegations.insert(
             Pubkey::new_unique(),
             StakeAccount::try_from(stake_state::create_account(
