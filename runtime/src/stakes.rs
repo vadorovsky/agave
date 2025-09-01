@@ -1,10 +1,10 @@
 //! Stakes serve as a cache of stake and vote accounts to derive
 //! node stakes
+use rpds::HashTrieMap;
 #[cfg(feature = "dev-context-only-utils")]
 use solana_stake_interface::state::Stake;
 use {
     crate::{stake_account, stake_history::StakeHistory},
-    im::HashMap as ImHashMap,
     log::error,
     num_derive::ToPrimitive,
     rayon::{prelude::*, ThreadPool},
@@ -162,7 +162,7 @@ pub struct Stakes<T: Clone> {
     vote_accounts: VoteAccounts,
 
     /// stake_delegations
-    stake_delegations: ImHashMap<Pubkey, T>,
+    stake_delegations: HashTrieMap<Pubkey, T>,
 
     /// unused
     unused: u64,
@@ -203,7 +203,7 @@ impl Stakes<StakeAccount> {
             // We use fold/reduce to aggregate the results, which does a bit more work than calling
             // collect()/collect_vec_list() and then im::HashMap::from_iter(collected.into_iter()),
             // but it does it in background threads, so effectively it's faster.
-            .try_fold(ImHashMap::new, |mut map, (pubkey, delegation)| {
+            .try_fold(HashTrieMap::new, |mut map, (pubkey, delegation)| {
                 let Some(stake_account) = get_account(pubkey) else {
                     return Err(Error::StakeAccountNotFound(*pubkey));
                 };
@@ -232,7 +232,7 @@ impl Stakes<StakeAccount> {
                     Err(Error::InvalidDelegation(*pubkey))
                 }
             })
-            .try_reduce(ImHashMap::new, |a, b| Ok(a.union(b)))?;
+            .try_reduce(HashTrieMap::new, |a, b| Ok(a.union(b)))?;
 
         // Assert that cached vote accounts are consistent with accounts-db.
         //
@@ -262,7 +262,7 @@ impl Stakes<StakeAccount> {
     pub fn new_for_tests(
         epoch: Epoch,
         vote_accounts: VoteAccounts,
-        stake_delegations: ImHashMap<Pubkey, StakeAccount>,
+        stake_delegations: HashTrieMap<Pubkey, StakeAccount>,
     ) -> Self {
         Self {
             vote_accounts,
@@ -315,7 +315,7 @@ impl Stakes<StakeAccount> {
 
     /// Sum the stakes that point to the given voter_pubkey
     fn calculate_stake(
-        stake_delegations: &ImHashMap<Pubkey, StakeAccount>,
+        stake_delegations: &HashTrieMap<Pubkey, StakeAccount>,
         voter_pubkey: &Pubkey,
         epoch: Epoch,
         stake_history: &StakeHistory,
@@ -338,7 +338,7 @@ impl Stakes<StakeAccount> {
         stake_pubkey: &Pubkey,
         new_rate_activation_epoch: Option<Epoch>,
     ) {
-        if let Some(stake_account) = self.stake_delegations.remove(stake_pubkey) {
+        if let Some(stake_account) = self.stake_delegations.get(stake_pubkey) {
             let removed_delegation = stake_account.delegation();
             let removed_stake = removed_delegation.stake(
                 self.epoch,
@@ -348,6 +348,7 @@ impl Stakes<StakeAccount> {
             self.vote_accounts
                 .sub_stake(&removed_delegation.voter_pubkey, removed_stake);
         }
+        self.stake_delegations = self.stake_delegations.remove(stake_pubkey);
     }
 
     fn upsert_vote_account(
@@ -380,7 +381,7 @@ impl Stakes<StakeAccount> {
         let delegation = stake_account.delegation();
         let voter_pubkey = delegation.voter_pubkey;
         let stake = delegation.stake(self.epoch, &self.stake_history, new_rate_activation_epoch);
-        match self.stake_delegations.insert(stake_pubkey, stake_account) {
+        match self.stake_delegations.get(&stake_pubkey) {
             None => self.vote_accounts.add_stake(&voter_pubkey, stake),
             Some(old_stake_account) => {
                 let old_delegation = old_stake_account.delegation();
@@ -396,9 +397,10 @@ impl Stakes<StakeAccount> {
                 }
             }
         }
+        self.stake_delegations = self.stake_delegations.insert(stake_pubkey, stake_account);
     }
 
-    pub(crate) fn stake_delegations(&self) -> &ImHashMap<Pubkey, StakeAccount> {
+    pub(crate) fn stake_delegations(&self) -> &HashTrieMap<Pubkey, StakeAccount> {
         &self.stake_delegations
     }
 
@@ -416,7 +418,7 @@ impl From<Stakes<StakeAccount>> for Stakes<Delegation> {
         let stake_delegations = stakes
             .stake_delegations
             .into_iter()
-            .map(|(pubkey, stake_account)| (pubkey, *stake_account.delegation()))
+            .map(|(pubkey, stake_account)| (*pubkey, *stake_account.delegation()))
             .collect();
         Self {
             vote_accounts: stakes.vote_accounts,
@@ -436,7 +438,7 @@ impl From<Stakes<StakeAccount>> for Stakes<Stake> {
         let stake_delegations = stakes
             .stake_delegations
             .into_iter()
-            .map(|(pubkey, stake_account)| (pubkey, *stake_account.stake()))
+            .map(|(pubkey, stake_account)| (*pubkey, *stake_account.stake()))
             .collect();
         Self {
             vote_accounts: stakes.vote_accounts,
@@ -456,7 +458,7 @@ impl From<Stakes<Stake>> for Stakes<Delegation> {
         let stake_delegations = stakes
             .stake_delegations
             .into_iter()
-            .map(|(pubkey, stake)| (pubkey, stake.delegation))
+            .map(|(pubkey, stake)| (*pubkey, stake.delegation))
             .collect();
         Self {
             vote_accounts: stakes.vote_accounts,
