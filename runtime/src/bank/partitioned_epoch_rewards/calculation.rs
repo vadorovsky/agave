@@ -21,19 +21,23 @@ use {
     ahash::random_state::RandomState as AHashRandomState,
     dashmap::DashMap,
     log::{debug, info},
-    rayon::{iter::ParallelIterator, ThreadPool},
+    rayon::{
+        iter::{IntoParallelRefIterator, ParallelIterator},
+        ThreadPool,
+    },
     solana_account::ReadableAccount,
     solana_clock::{Epoch, Slot},
     solana_measure::measure_us,
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
-    solana_stake_interface::state::Delegation,
+    solana_stake_interface::state::{Delegation, StakeActivationStatus},
     solana_sysvar::epoch_rewards::EpochRewards,
     solana_vote::vote_account::VoteAccount,
     solana_vote_program::vote_state::VoteStateVersions,
     std::{
         borrow::Borrow,
         marker::PhantomData,
+        ops::Add,
         sync::{
             atomic::{AtomicU64, Ordering::Relaxed},
             Arc,
@@ -42,6 +46,37 @@ use {
 };
 
 impl Bank {
+    pub(in crate::bank) fn activate_epoch(
+        &mut self,
+        reward_calc_tracer: Option<impl RewardCalcTracer>,
+        thread_pool: &ThreadPool,
+        next_epoch: Epoch,
+        new_rate_activation_epoch: Option<Epoch>,
+        parent_epoch: Epoch,
+        parent_slot: Slot,
+        parent_block_height: u64,
+        rewards_metrics: &mut RewardsMetrics,
+    ) {
+        let mut stakes = self.stakes_cache.stakes();
+
+        let stake_delegations: Vec<_> = stakes.stake_delegations().iter().collect();
+        // Wrap up the prev epoch by adding new stake history entry for the
+        // prev epoch.
+        let _stake_history_entry = thread_pool.install(|| {
+            stake_delegations
+                .par_iter()
+                .fold(StakeActivationStatus::default, |acc, (_, stake_account)| {
+                    let delegation = stake_account.delegation();
+                    acc + delegation.stake_activating_and_deactivating(
+                        self.epoch,
+                        stakes.history(),
+                        new_rate_activation_epoch,
+                    )
+                })
+                .reduce(StakeActivationStatus::default, Add::add)
+        });
+    }
+
     /// Begin the process of calculating and distributing rewards.
     /// This process can take multiple slots.
     pub(in crate::bank) fn begin_partitioned_rewards(
