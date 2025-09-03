@@ -2,13 +2,13 @@ use {
     crate::stakes::SerdeStakesToStakeFormat,
     serde::{Deserialize, Serialize},
     solana_clock::Epoch,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{collections::HashMap, sync::Arc},
 };
 
-pub type NodeIdToVoteAccounts = HashMap<Pubkey, NodeVoteAccounts>;
-pub type EpochAuthorizedVoters = HashMap<Pubkey, Pubkey>;
+pub type NodeIdToVoteAccounts = HashMap<Pubkey, NodeVoteAccounts, PubkeyHasherBuilder>;
+pub type EpochAuthorizedVoters = HashMap<Pubkey, Pubkey, PubkeyHasherBuilder>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Serialize, Debug, Deserialize, Default, PartialEq, Eq)]
@@ -115,7 +115,8 @@ impl VersionedEpochStakes {
         epoch_vote_accounts: &VoteAccountsHashMap,
         leader_schedule_epoch: Epoch,
     ) -> (u64, NodeIdToVoteAccounts, EpochAuthorizedVoters) {
-        let mut node_id_to_vote_accounts: NodeIdToVoteAccounts = HashMap::new();
+        let mut node_id_to_vote_accounts: NodeIdToVoteAccounts =
+            HashMap::with_hasher(PubkeyHasherBuilder::default());
         let total_stake = epoch_vote_accounts
             .iter()
             .map(|(_, (stake, _))| stake)
@@ -169,7 +170,7 @@ pub(crate) mod tests {
     fn new_vote_accounts(
         num_nodes: usize,
         num_vote_accounts_per_node: usize,
-    ) -> HashMap<Pubkey, Vec<VoteAccountInfo>> {
+    ) -> HashMap<Pubkey, Vec<VoteAccountInfo>, PubkeyHasherBuilder> {
         // Create some vote accounts for each pubkey
         (0..num_nodes)
             .map(|_| {
@@ -198,7 +199,7 @@ pub(crate) mod tests {
     }
 
     fn new_epoch_vote_accounts(
-        vote_accounts_map: &HashMap<Pubkey, Vec<VoteAccountInfo>>,
+        vote_accounts_map: &HashMap<Pubkey, Vec<VoteAccountInfo>, PubkeyHasherBuilder>,
         node_id_to_stake_fn: impl Fn(&Pubkey) -> u64,
     ) -> VoteAccountsHashMap {
         // Create and process the vote accounts
