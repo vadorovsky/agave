@@ -1,5 +1,6 @@
 //! Stakes serve as a cache of stake and vote accounts to derive
 //! node stakes
+use solana_stake_interface::stake_history::StakeHistoryEntry;
 #[cfg(feature = "dev-context-only-utils")]
 use solana_stake_interface::state::Stake;
 
@@ -142,10 +143,18 @@ impl StakesCache {
         &self,
         next_epoch: Epoch,
         thread_pool: &ThreadPool,
+        stake_history_entry: StakeHistoryEntry,
+        stake_delegations: &[(&Pubkey, &StakeAccount)],
         new_rate_activation_epoch: Option<Epoch>,
-    ) -> Vec<(Pubkey, StakeAccount)> {
+    ) {
         let mut stakes = self.0.write().unwrap();
-        stakes.activate_epoch(next_epoch, thread_pool, new_rate_activation_epoch)
+        stakes.activate_epoch(
+            next_epoch,
+            thread_pool,
+            stake_history_entry,
+            stake_delegations,
+            new_rate_activation_epoch,
+        )
     }
 }
 
@@ -282,32 +291,34 @@ impl Stakes<StakeAccount> {
         &mut self,
         next_epoch: Epoch,
         thread_pool: &ThreadPool,
+        stake_history_entry: StakeHistoryEntry,
+        stake_delegations: &[(Pubkey, StakeAccount)],
         new_rate_activation_epoch: Option<Epoch>,
-    ) -> Vec<(Pubkey, StakeAccount)> {
-        // This vector is reused through the whole epoch boundary until stake
-        // reward recalculation. It's a big copy, but doing that is still
-        // better than collecting the `im::HashMap` again (it takes 200ms).
-        // It's also better than holding the stake cache RWLock for longer.
-        let stake_delegations: Vec<_> = self
-            .stake_delegations
-            .iter()
-            .map(|(k, v)| (*k, v.clone()))
-            .collect();
-        // Wrap up the prev epoch by adding new stake history entry for the
-        // prev epoch.
-        let stake_history_entry = thread_pool.install(|| {
-            stake_delegations
-                .par_iter()
-                .fold(StakeActivationStatus::default, |acc, (_, stake_account)| {
-                    let delegation = stake_account.delegation();
-                    acc + delegation.stake_activating_and_deactivating(
-                        self.epoch,
-                        &self.stake_history,
-                        new_rate_activation_epoch,
-                    )
-                })
-                .reduce(StakeActivationStatus::default, Add::add)
-        });
+    ) {
+        // // This vector is reused through the whole epoch boundary until stake
+        // // reward recalculation. It's a big copy, but doing that is still
+        // // better than collecting the `im::HashMap` again (it takes 200ms).
+        // // It's also better than holding the stake cache RWLock for longer.
+        // let stake_delegations: Vec<_> = self
+        //     .stake_delegations
+        //     .iter()
+        //     .map(|(k, v)| (*k, v.clone()))
+        //     .collect();
+        // // Wrap up the prev epoch by adding new stake history entry for the
+        // // prev epoch.
+        // let stake_history_entry = thread_pool.install(|| {
+        //     stake_delegations
+        //         .par_iter()
+        //         .fold(StakeActivationStatus::default, |acc, (_, stake_account)| {
+        //             let delegation = stake_account.delegation();
+        //             acc + delegation.stake_activating_and_deactivating(
+        //                 self.epoch,
+        //                 &self.stake_history,
+        //                 new_rate_activation_epoch,
+        //             )
+        //         })
+        //         .reduce(StakeActivationStatus::default, Add::add)
+        // });
         self.stake_history.add(self.epoch, stake_history_entry);
         self.epoch = next_epoch;
         // Refresh the stake distribution of vote accounts for the next epoch,
@@ -320,7 +331,6 @@ impl Stakes<StakeAccount> {
             &self.stake_history,
             new_rate_activation_epoch,
         );
-        stake_delegations
     }
 
     /// Sum the stakes that point to the given voter_pubkey

@@ -62,7 +62,7 @@ impl Bank {
         let stake_delegations: Vec<_> = stakes.stake_delegations().iter().collect();
         // Wrap up the prev epoch by adding new stake history entry for the
         // prev epoch.
-        let _stake_history_entry = thread_pool.install(|| {
+        let stake_history_entry = thread_pool.install(|| {
             stake_delegations
                 .par_iter()
                 .fold(StakeActivationStatus::default, |acc, (_, stake_account)| {
@@ -75,6 +75,13 @@ impl Bank {
                 })
                 .reduce(StakeActivationStatus::default, Add::add)
         });
+        self.stakes_cache.activate_epoch(
+            next_epoch,
+            thread_pool,
+            stake_history_entry,
+            stake_delegations,
+            new_rate_activation_epoch,
+        );
     }
 
     /// Begin the process of calculating and distributing rewards.
