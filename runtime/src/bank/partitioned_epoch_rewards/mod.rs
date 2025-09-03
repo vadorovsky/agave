@@ -40,7 +40,7 @@ pub(crate) struct PartitionedStakeReward {
 }
 
 /// A vector of stake rewards.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub(crate) struct PartitionedStakeRewards {
     /// Inner vector.
     rewards: Vec<Option<PartitionedStakeReward>>,
@@ -110,12 +110,6 @@ impl FromIterator<Option<PartitionedStakeReward>> for PartitionedStakeRewards {
             rewards,
             num_rewards: len_some,
         }
-    }
-}
-
-impl PartialEq for PartitionedStakeRewards {
-    fn eq(&self, other: &Self) -> bool {
-        self.rewards.eq(&other.rewards)
     }
 }
 
