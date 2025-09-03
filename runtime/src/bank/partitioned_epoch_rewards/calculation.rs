@@ -500,7 +500,7 @@ impl Bank {
         });
         // SAFETY: We initialized all the `stake_rewards` elements up to the capacity.
         unsafe {
-            stake_rewards.set_len(stake_rewards.capacity());
+            stake_rewards.assume_init();
         }
         stake_rewards.set_len_some(len_stake_rewards_some);
         let vote_rewards = Self::calc_vote_accounts_to_store(vote_account_rewards);
@@ -790,7 +790,7 @@ mod tests {
 
         // assert that number of stake rewards matches
         assert_eq!(
-            stake_rewards.stake_rewards.len_some(),
+            stake_rewards.stake_rewards.num_rewards(),
             delegations_with_rewards
         );
     }
@@ -913,7 +913,7 @@ mod tests {
         );
         assert_eq!(vote_pubkey_from_result, vote_pubkey);
 
-        assert_eq!(stake_reward_calculation.stake_rewards.len_some(), 1);
+        assert_eq!(stake_reward_calculation.stake_rewards.num_rewards(), 1);
         let expected_reward = {
             let stake_reward = 8_400_000_000_000;
             let stake_state: StakeStateV2 = stake_account.state().unwrap();
@@ -928,7 +928,12 @@ mod tests {
             }
         };
         assert_eq!(
-            stake_reward_calculation.stake_rewards[0].as_ref().unwrap(),
+            stake_reward_calculation
+                .stake_rewards
+                .get(0)
+                .unwrap()
+                .as_ref()
+                .unwrap(),
             &expected_reward
         );
     }
@@ -939,10 +944,7 @@ mod tests {
     ) {
         for (i, partition) in received_stake_rewards.iter().enumerate() {
             let expected_partition = &expected_stake_rewards[i];
-            assert_eq!(partition.len_some(), expected_partition.len_some());
-            for reward in partition {
-                assert!(expected_partition.iter().any(|x| x == reward));
-            }
+            assert_eq!(partition, expected_partition);
         }
     }
 
@@ -1022,7 +1024,7 @@ mod tests {
         );
         // First partition has already been distributed, so recalculation
         // returns 0 rewards
-        assert_eq!(recalculated_rewards[0].len_some(), 0);
+        assert_eq!(recalculated_rewards[0].num_rewards(), 0);
         let starting_index = (bank.block_height() + 1
             - epoch_rewards_sysvar.distribution_starting_block_height)
             as usize;
@@ -1202,7 +1204,7 @@ mod tests {
         assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
         // First partition has already been distributed, so recalculation
         // returns 0 rewards
-        assert_eq!(recalculated_rewards[0].len_some(), 0);
+        assert_eq!(recalculated_rewards[0].num_rewards(), 0);
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
         let starting_index = (bank.block_height() + 1
             - epoch_rewards_sysvar.distribution_starting_block_height)

@@ -20,12 +20,7 @@ use {
     solana_reward_info::RewardInfo,
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
-    std::{
-        mem::MaybeUninit,
-        ops::Index,
-        slice::{Iter, SliceIndex},
-        sync::Arc,
-    },
+    std::{mem::MaybeUninit, sync::Arc},
 };
 
 /// Number of blocks for reward calculation and storing vote accounts.
@@ -49,8 +44,8 @@ pub(crate) struct PartitionedStakeReward {
 pub(crate) struct PartitionedStakeRewards {
     /// Inner vector.
     rewards: Vec<Option<PartitionedStakeReward>>,
-    /// Number of `Some` elements.
-    len_some: usize,
+    /// Number of stake rewards.
+    num_rewards: usize,
 }
 
 impl PartitionedStakeRewards {
@@ -58,37 +53,48 @@ impl PartitionedStakeRewards {
         let rewards = Vec::with_capacity(capacity);
         Self {
             rewards,
-            len_some: 0,
+            num_rewards: 0,
         }
     }
 
-    pub(crate) fn capacity(&self) -> usize {
-        self.rewards.capacity()
+    /// Number of stake rewards.
+    pub(crate) fn num_rewards(&self) -> usize {
+        self.num_rewards
     }
 
-    /// Number of `Some` elements.
-    pub(crate) fn len_some(&self) -> usize {
-        self.len_some
+    /// Total length, including both `Some` and `None` elements.
+    pub(crate) fn total_len(&self) -> usize {
+        self.rewards.len()
     }
 
     pub(crate) fn get(&self, index: usize) -> Option<&Option<PartitionedStakeReward>> {
         self.rewards.get(index)
     }
 
-    pub(crate) fn iter(&self) -> Iter<'_, Option<PartitionedStakeReward>> {
-        self.into_iter()
+    #[cfg(test)]
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &PartitionedStakeReward> {
+        self.rewards.iter().filter_map(|reward| reward.as_ref())
+    }
+
+    pub(crate) fn enumerated_rewards_iter(
+        &self,
+    ) -> impl Iterator<Item = (usize, &PartitionedStakeReward)> {
+        self.rewards
+            .iter()
+            .enumerate()
+            .filter_map(|(index, reward)| Some((index, reward.as_ref()?)))
     }
 
     fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<Option<PartitionedStakeReward>>] {
         self.rewards.spare_capacity_mut()
     }
 
-    unsafe fn set_len(&mut self, new_len: usize) {
-        self.rewards.set_len(new_len)
+    unsafe fn assume_init(&mut self) {
+        self.rewards.set_len(self.rewards.capacity());
     }
 
     fn set_len_some(&mut self, len_some: usize) {
-        self.len_some = len_some
+        self.num_rewards = len_some
     }
 }
 
@@ -100,27 +106,10 @@ impl FromIterator<Option<PartitionedStakeReward>> for PartitionedStakeRewards {
                 len_some = len_some.saturating_add(1);
             }
         }));
-        Self { rewards, len_some }
-    }
-}
-
-impl<I> Index<I> for PartitionedStakeRewards
-where
-    I: SliceIndex<[Option<PartitionedStakeReward>]>,
-{
-    type Output = I::Output;
-
-    fn index(&self, index: I) -> &Self::Output {
-        self.rewards.index(index)
-    }
-}
-
-impl<'a> IntoIterator for &'a PartitionedStakeRewards {
-    type Item = <Self::IntoIter as IntoIterator>::Item;
-    type IntoIter = Iter<'a, Option<PartitionedStakeReward>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.rewards.iter()
+        Self {
+            rewards,
+            num_rewards: len_some,
+        }
     }
 }
 
@@ -366,7 +355,7 @@ impl Bank {
         &self,
         rewards: &PartitionedStakeRewards,
     ) -> u64 {
-        let total_stake_accounts = rewards.len_some();
+        let total_stake_accounts = rewards.num_rewards();
         if self.epoch_schedule.warmup && self.epoch < self.first_normal_epoch() {
             1
         } else {
@@ -450,7 +439,7 @@ mod tests {
                 // that belong to this partition
                 partition_index
                     .iter()
-                    .map(|&index| stake_rewards[index].clone())
+                    .map(|&index| stake_rewards.get(index).unwrap().clone())
                     .collect::<PartitionedStakeRewards>()
             })
             .collect::<Vec<_>>()
@@ -759,7 +748,7 @@ mod tests {
             })
             .collect::<PartitionedStakeRewards>();
         assert_eq!(rewards.rewards.len(), rewards_all);
-        assert_eq!(rewards.len_some(), expected_rewards_some);
+        assert_eq!(rewards.num_rewards(), expected_rewards_some);
 
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);

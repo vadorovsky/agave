@@ -163,7 +163,7 @@ impl Bank {
         let metrics = RewardsStoreMetrics {
             pre_capitalization,
             post_capitalization: self.capitalization(),
-            total_stake_accounts_count: partition_rewards.all_stake_rewards.len_some(),
+            total_stake_accounts_count: partition_rewards.all_stake_rewards.num_rewards(),
             total_num_partitions: partition_rewards.partition_indices.len(),
             partition_index,
             store_stake_accounts_us,
@@ -269,7 +269,7 @@ impl Bank {
                 .unwrap_or_else(|| {
                     panic!(
                         "partition reward out of bound: {index} >= {}",
-                        partition_rewards.all_stake_rewards.len_some()
+                        partition_rewards.all_stake_rewards.total_len()
                     )
                 })
                 .as_ref()
@@ -753,11 +753,7 @@ mod tests {
 
         let expected_total = converted_rewards
             .iter()
-            .filter_map(|stake_reward| {
-                stake_reward
-                    .as_ref()
-                    .map(|stake_reward| stake_reward.stake_reward)
-            })
+            .map(|stake_reward| stake_reward.stake_reward)
             .sum::<u64>();
 
         let partitioned_rewards = StartBlockHeightAndPartitionedRewards {
