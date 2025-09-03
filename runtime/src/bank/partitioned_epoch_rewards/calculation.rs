@@ -79,9 +79,19 @@ impl Bank {
             next_epoch,
             thread_pool,
             stake_history_entry,
-            stake_delegations,
+            &stake_delegations,
             new_rate_activation_epoch,
         );
+
+        // self.begin_partitioned_rewards(
+        //     reward_calc_tracer,
+        //     thread_pool,
+        //     &stake_delegations,
+        //     parent_epoch,
+        //     parent_slot,
+        //     parent_block_height,
+        //     rewards_metrics,
+        // );
     }
 
     /// Begin the process of calculating and distributing rewards.
@@ -90,7 +100,7 @@ impl Bank {
         &mut self,
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
         thread_pool: &ThreadPool,
-        stake_delegations: &[(Pubkey, StakeAccount<Delegation>)],
+        stake_delegations: &[(&Pubkey, &StakeAccount<Delegation>)],
         parent_epoch: Epoch,
         parent_slot: Slot,
         parent_block_height: u64,

@@ -292,7 +292,7 @@ impl Stakes<StakeAccount> {
         next_epoch: Epoch,
         thread_pool: &ThreadPool,
         stake_history_entry: StakeHistoryEntry,
-        stake_delegations: &[(Pubkey, StakeAccount)],
+        stake_delegations: &[(&Pubkey, &StakeAccount)],
         new_rate_activation_epoch: Option<Epoch>,
     ) {
         // // This vector is reused through the whole epoch boundary until stake
@@ -327,7 +327,7 @@ impl Stakes<StakeAccount> {
             thread_pool,
             self.epoch,
             &self.vote_accounts,
-            &stake_delegations,
+            stake_delegations,
             &self.stake_history,
             new_rate_activation_epoch,
         );

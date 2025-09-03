@@ -1612,14 +1612,16 @@ impl Bank {
         // update vote accounts with warmed up stakes before saving a
         // snapshot of stakes in epoch stakes
         let mut rewards_metrics = RewardsMetrics::default();
-        let (stake_delegations, activate_epoch_time_us) =
-            measure_us!(self.stakes_cache.activate_epoch(
-                reward_calc_tracer,
-                epoch,
-                &thread_pool,
-                self.new_warmup_cooldown_rate_epoch(),
-                &mut rewards_metrics
-            ));
+        let (stake_delegations, activate_epoch_time_us) = measure_us!(self.activate_epoch(
+            reward_calc_tracer,
+            &thread_pool,
+            epoch,
+            self.new_warmup_cooldown_rate_epoch(),
+            parent_epoch,
+            parent_slot,
+            parent_height,
+            &mut rewards_metrics
+        ));
 
         // Save a snapshot of stakes for use in consensus and stake weighted networking
         let leader_schedule_epoch = self.epoch_schedule.get_leader_schedule_epoch(slot);
