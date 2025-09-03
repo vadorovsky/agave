@@ -7,7 +7,7 @@ use {
     },
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     std::{
         cmp::Ordering,
         collections::{hash_map::Entry, HashMap},
@@ -38,7 +38,7 @@ struct VoteAccountInner {
     vote_state_view: VoteStateView,
 }
 
-pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount)>;
+pub type VoteAccountsHashMap = HashMap<Pubkey, (/*stake:*/ u64, VoteAccount), PubkeyHasherBuilder>;
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VoteAccounts {
@@ -51,6 +51,7 @@ pub struct VoteAccounts {
             HashMap<
                 Pubkey, // VoteAccount.vote_state.node_pubkey.
                 u64,    // Total stake across all vote-accounts.
+                PubkeyHasherBuilder,
             >,
         >,
     >,
@@ -135,7 +136,9 @@ impl VoteAccounts {
         self.vote_accounts.is_empty()
     }
 
-    pub fn staked_nodes(&self) -> Arc<HashMap</*node_pubkey:*/ Pubkey, /*stake:*/ u64>> {
+    pub fn staked_nodes(
+        &self,
+    ) -> Arc<HashMap</*node_pubkey:*/ Pubkey, /*stake:*/ u64, PubkeyHasherBuilder>> {
         self.staked_nodes
             .get_or_init(|| {
                 Arc::new(
@@ -257,7 +260,7 @@ impl VoteAccounts {
     }
 
     fn do_add_node_stake(
-        staked_nodes: &mut Arc<HashMap<Pubkey, u64>>,
+        staked_nodes: &mut Arc<HashMap<Pubkey, u64, PubkeyHasherBuilder>>,
         stake: u64,
         node_pubkey: Pubkey,
     ) {
@@ -280,7 +283,7 @@ impl VoteAccounts {
     }
 
     fn do_sub_node_stake(
-        staked_nodes: &mut Arc<HashMap<Pubkey, u64>>,
+        staked_nodes: &mut Arc<HashMap<Pubkey, u64, PubkeyHasherBuilder>>,
         stake: u64,
         node_pubkey: &Pubkey,
     ) {
@@ -422,7 +425,7 @@ where
         where
             M: MapAccess<'de>,
         {
-            let mut accounts = HashMap::new();
+            let mut accounts = HashMap::with_hasher(PubkeyHasherBuilder::default());
 
             while let Some((pubkey, (stake, account))) =
                 access.next_entry::<Pubkey, (u64, AccountSharedData)>()?
@@ -497,11 +500,11 @@ mod tests {
         })
     }
 
-    fn staked_nodes<'a, I>(vote_accounts: I) -> HashMap<Pubkey, u64>
+    fn staked_nodes<'a, I>(vote_accounts: I) -> HashMap<Pubkey, u64, PubkeyHasherBuilder>
     where
         I: IntoIterator<Item = &'a (Pubkey, (u64, VoteAccount))>,
     {
-        let mut staked_nodes = HashMap::new();
+        let mut staked_nodes = HashMap::with_hasher(PubkeyHasherBuilder::default());
         for (_, (stake, vote_account)) in vote_accounts
             .into_iter()
             .filter(|(_, (stake, _))| *stake != 0)
