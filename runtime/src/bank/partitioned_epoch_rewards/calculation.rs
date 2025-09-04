@@ -26,16 +26,70 @@ use {
     solana_account::ReadableAccount,
     solana_clock::{Epoch, Slot},
     solana_measure::{measure::Measure, measure_us},
-    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
+    solana_pubkey::Pubkey,
     solana_stake_interface::state::Delegation,
     solana_sysvar::epoch_rewards::EpochRewards,
     solana_vote::vote_account::VoteAccount,
     solana_vote_program::vote_state::VoteStateVersions,
     std::{
-        collections::HashMap,
+        ops::Add,
         sync::{atomic::Ordering::Relaxed, Arc},
     },
 };
+
+#[derive(Default)]
+struct RewardsAccumulator {
+    vote_rewards: VoteRewards,
+    num_stake_rewards: usize,
+    total_stake_rewards_lamports: u64,
+}
+
+impl RewardsAccumulator {
+    fn add_reward(&mut self, vote_pubkey: Pubkey, vote_reward: VoteReward, stakers_reward: u64) {
+        self.vote_rewards
+            .entry(vote_pubkey)
+            .and_modify(|dst_vote_reward| {
+                dst_vote_reward.vote_rewards = dst_vote_reward
+                    .vote_rewards
+                    .saturating_add(vote_reward.vote_rewards)
+            })
+            .or_insert(vote_reward);
+        self.num_stake_rewards = self.num_stake_rewards.saturating_add(1);
+        self.total_stake_rewards_lamports = self
+            .total_stake_rewards_lamports
+            .saturating_add(stakers_reward);
+    }
+}
+
+impl Add for RewardsAccumulator {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        // Check which instance has more vote rewards. Treat the bigger one
+        // as a destination, which is going to be extended. This way we make
+        // the reallocation as small as possible.
+        let (mut dst, src) = if self.vote_rewards.len() >= rhs.vote_rewards.len() {
+            (self, rhs)
+        } else {
+            (rhs, self)
+        };
+        for (vote_pubkey, vote_reward) in src.vote_rewards {
+            dst.vote_rewards
+                .entry(vote_pubkey)
+                .and_modify(|dst_vote_reward: &mut VoteReward| {
+                    dst_vote_reward.vote_rewards = dst_vote_reward
+                        .vote_rewards
+                        .saturating_add(vote_reward.vote_rewards)
+                })
+                .or_insert(vote_reward);
+        }
+        dst.num_stake_rewards = dst.num_stake_rewards.saturating_add(src.num_stake_rewards);
+        dst.total_stake_rewards_lamports = dst
+            .total_stake_rewards_lamports
+            .saturating_add(src.total_stake_rewards_lamports);
+        dst
+    }
+}
 
 impl Bank {
     /// Begin the process of calculating and distributing rewards.
@@ -354,11 +408,7 @@ impl Bank {
         // (re)allocations. To avoid that, we allocate it at the start and
         // pass `stake_rewards.spare_capacity_mut()` as one of iterators.
         let mut stake_rewards = PartitionedStakeRewards::with_capacity(stake_delegations.len());
-        let (vote_account_rewards, len_stake_rewards_some, total_stake_rewards_lamports): (
-            VoteRewards,
-            usize,
-            u64,
-        ) = thread_pool.install(|| {
+        let rewards_accumulator: RewardsAccumulator = thread_pool.install(|| {
             stake_delegations
                 .par_iter()
                 .zip_eq(stake_rewards.spare_capacity_mut())
@@ -440,61 +490,16 @@ impl Bank {
                     res
                 })
                 .fold(
-                    || {
-                        (
-                            HashMap::with_hasher(PubkeyHasherBuilder::default()),
-                            usize::default(),
-                            u64::default(),
-                        )
-                    },
-                    |(mut vote_rewards, len_stake_rewards_some, total_stake_rewards),
-                     (vote_pubkey, vote_reward, stakers_reward)| {
-                        vote_rewards
-                            .entry(vote_pubkey)
-                            .and_modify(|dst_vote_reward: &mut VoteReward| {
-                                dst_vote_reward.vote_rewards = dst_vote_reward
-                                    .vote_rewards
-                                    .saturating_add(vote_reward.vote_rewards)
-                            })
-                            .or_insert(vote_reward);
-                        (
-                            vote_rewards,
-                            len_stake_rewards_some.saturating_add(1),
-                            total_stake_rewards.saturating_add(stakers_reward),
-                        )
+                    || RewardsAccumulator::default(),
+                    |mut rewards_accumulator, (vote_pubkey, vote_reward, stakers_reward)| {
+                        rewards_accumulator.add_reward(vote_pubkey, vote_reward, stakers_reward);
+                        rewards_accumulator
                     },
                 )
                 .reduce(
-                    || {
-                        (
-                            HashMap::with_hasher(PubkeyHasherBuilder::default()),
-                            usize::default(),
-                            u64::default(),
-                        )
-                    },
-                    |(vote_rewards_a, len_stake_rewards_some_a, total_stake_rewards_a),
-                     (vote_rewards_b, len_stake_rewards_some_b, total_stake_rewards_b)| {
-                        let (mut dst_vote_rewards, src_vote_rewards) =
-                            if vote_rewards_a.len() >= vote_rewards_b.len() {
-                                (vote_rewards_a, vote_rewards_b)
-                            } else {
-                                (vote_rewards_b, vote_rewards_a)
-                            };
-                        for (vote_pubkey, vote_reward) in src_vote_rewards {
-                            dst_vote_rewards
-                                .entry(vote_pubkey)
-                                .and_modify(|dst_vote_reward: &mut VoteReward| {
-                                    dst_vote_reward.vote_rewards = dst_vote_reward
-                                        .vote_rewards
-                                        .saturating_add(vote_reward.vote_rewards)
-                                })
-                                .or_insert(vote_reward);
-                        }
-                        (
-                            dst_vote_rewards,
-                            len_stake_rewards_some_a.saturating_add(len_stake_rewards_some_b),
-                            total_stake_rewards_a.saturating_add(total_stake_rewards_b),
-                        )
+                    || RewardsAccumulator::default(),
+                    |rewards_accumulator_a, rewards_accumulator_b| {
+                        rewards_accumulator_a + rewards_accumulator_b
                     },
                 )
         });
@@ -502,8 +507,13 @@ impl Bank {
         unsafe {
             stake_rewards.assume_init();
         }
-        stake_rewards.set_len_some(len_stake_rewards_some);
-        let vote_rewards = Self::calc_vote_accounts_to_store(vote_account_rewards);
+        let RewardsAccumulator {
+            vote_rewards,
+            num_stake_rewards,
+            total_stake_rewards_lamports,
+        } = rewards_accumulator;
+        stake_rewards.set_len_some(num_stake_rewards);
+        let vote_rewards = Self::calc_vote_accounts_to_store(vote_rewards);
         measure_redeem_rewards.stop();
         metrics.redeem_rewards_us = measure_redeem_rewards.as_us();
 
