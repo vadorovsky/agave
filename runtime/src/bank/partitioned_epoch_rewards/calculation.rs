@@ -27,10 +27,7 @@ use {
     solana_clock::{Epoch, Slot},
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
-    solana_stake_interface::{
-        stake_history::StakeHistory,
-        state::{Delegation, StakeStateV2},
-    },
+    solana_stake_interface::state::Delegation,
     solana_sysvar::epoch_rewards::EpochRewards,
     solana_vote::vote_account::VoteAccount,
     solana_vote_program::vote_state::VoteStateVersions,
@@ -380,29 +377,13 @@ impl Bank {
         }
     }
 
-    fn assert_stake_cache(&self, vote_pubkey: &Pubkey) {
-        let account_from_db = self.get_account_with_fixed_root(vote_pubkey);
-        if let Some(account_from_db) = account_from_db {
-            if VoteStateVersions::is_correct_size_and_initialized(account_from_db.data())
-                && VoteAccount::try_from(account_from_db.clone()).is_ok()
-            {
-                panic!(
-                    "Vote account {} not found in cache, but found in db: {:?}",
-                    vote_pubkey, account_from_db
-                );
-            }
-        }
-    }
-
     fn redeem_delegation_rewards(
         &self,
         rewarded_epoch: Epoch,
-        stake_pubkey: Pubkey,
-        stake_state: &mut StakeStateV2,
-        vote_pubkey: Pubkey,
-        vote_account: &VoteAccount,
+        stake_pubkey: &Pubkey,
+        stake_account: &StakeAccount<Delegation>,
         point_value: &PointValue,
-        stake_history: &StakeHistory,
+        reward_calculate_params: &EpochRewardCalculateParamInfo,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         new_rate_activation_epoch: Option<Epoch>,
     ) -> Option<DelegationRewards> {
@@ -410,15 +391,43 @@ impl Bank {
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
             // inner
             move |inner_event: &_| {
-                outer(&RewardCalculationEvent::Staking(&stake_pubkey, inner_event))
+                outer(&RewardCalculationEvent::Staking(stake_pubkey, inner_event))
             }
         });
+        const ASSERT_STAKE_CACHE: bool = false; // Turn this on to assert that all vote accounts are in the cache
 
+        let EpochRewardCalculateParamInfo {
+            stake_history,
+            cached_vote_accounts,
+            ..
+        } = reward_calculate_params;
+
+        let stake_pubkey = *stake_pubkey;
+        let vote_pubkey = stake_account.delegation().voter_pubkey;
+        let vote_account_from_cache = cached_vote_accounts.get(&vote_pubkey);
+        if ASSERT_STAKE_CACHE && vote_account_from_cache.is_none() {
+            let account_from_db = self.get_account_with_fixed_root(&vote_pubkey);
+            if let Some(account_from_db) = account_from_db {
+                if VoteStateVersions::is_correct_size_and_initialized(account_from_db.data())
+                    && VoteAccount::try_from(account_from_db.clone()).is_ok()
+                {
+                    panic!(
+                        "Vote account {vote_pubkey} not found in cache, but found in db: {account_from_db:?}"
+                    );
+                }
+            }
+        }
+
+        let Some(vote_account) = vote_account_from_cache else {
+            debug!("could not find vote account {vote_pubkey} in cache");
+            return None;
+        };
+        let mut stake_state = *stake_account.stake_state();
         let vote_state = vote_account.vote_state_view();
 
         match redeem_rewards(
             rewarded_epoch,
-            stake_state,
+            &mut stake_state,
             vote_state,
             point_value,
             stake_history,
@@ -464,14 +473,11 @@ impl Bank {
         metrics: &mut RewardsMetrics,
     ) -> (VoteRewardsAccounts, StakeRewardCalculation) {
         let EpochRewardCalculateParamInfo {
-            stake_history,
-            stake_delegations,
-            cached_vote_accounts,
+            stake_delegations, ..
         } = reward_calculate_params;
 
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
 
-        const ASSERT_STAKE_CACHE: bool = false; // Turn this on to assert that all vote accounts are in the cache
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
         // For N stake delegations, where N is >1,000,000, we produce:
         // * N stake rewards,
@@ -489,30 +495,15 @@ impl Bank {
                 .zip_eq(stake_rewards.spare_capacity_mut())
                 .with_min_len(500)
                 .filter_map(|((stake_pubkey, stake_account), stake_reward_ref)| {
-                    let stake_pubkey = **stake_pubkey;
-                    let vote_pubkey = stake_account.delegation().voter_pubkey;
-                    let vote_account_from_cache = cached_vote_accounts.get(&vote_pubkey);
-                    if ASSERT_STAKE_CACHE && vote_account_from_cache.is_none() {
-                        self.assert_stake_cache(&vote_pubkey);
-                    }
-                    let res = if let Some(vote_account) = vote_account_from_cache {
-                        let mut stake_state = *stake_account.stake_state();
-
-                        self.redeem_delegation_rewards(
-                            rewarded_epoch,
-                            stake_pubkey,
-                            &mut stake_state,
-                            vote_pubkey,
-                            vote_account,
-                            &point_value,
-                            stake_history,
-                            reward_calc_tracer.as_ref(),
-                            new_warmup_cooldown_rate_epoch,
-                        )
-                    } else {
-                        debug!("could not find vote account {vote_pubkey} in cache");
-                        None
-                    };
+                    let res = self.redeem_delegation_rewards(
+                        rewarded_epoch,
+                        stake_pubkey,
+                        stake_account,
+                        &point_value,
+                        reward_calculate_params,
+                        reward_calc_tracer.as_ref(),
+                        new_warmup_cooldown_rate_epoch,
+                    );
                     let (stake_reward, res) = match res {
                         Some(res) => {
                             let DelegationRewards {
