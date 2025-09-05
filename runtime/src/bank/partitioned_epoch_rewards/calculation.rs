@@ -422,12 +422,11 @@ impl Bank {
             debug!("could not find vote account {vote_pubkey} in cache");
             return None;
         };
-        let mut stake_state = *stake_account.stake_state();
         let vote_state = vote_account.vote_state_view();
 
         match redeem_rewards(
             rewarded_epoch,
-            &mut stake_state,
+            stake_account,
             vote_state,
             point_value,
             stake_history,
