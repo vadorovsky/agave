@@ -29,7 +29,7 @@ use {
     solana_pubkey::Pubkey,
     solana_stake_interface::state::Delegation,
     solana_sysvar::epoch_rewards::EpochRewards,
-    solana_vote::vote_account::VoteAccount,
+    solana_vote::vote_account::{VoteAccount, VoteAccounts},
     solana_vote_program::vote_state::VoteStateVersions,
     std::{
         ops::Add,
@@ -377,6 +377,31 @@ impl Bank {
         }
     }
 
+    fn vote_account_from_cache<'a>(
+        &'a self,
+        cached_vote_accounts: &'a VoteAccounts,
+        vote_pubkey: &Pubkey,
+    ) -> Option<&'a VoteAccount> {
+        const ASSERT_STAKE_CACHE: bool = false; // Turn this on to assert that all vote accounts are in the cache
+        let vote_account_from_cache = cached_vote_accounts.get(vote_pubkey);
+        if ASSERT_STAKE_CACHE && vote_account_from_cache.is_none() {
+            let account_from_db = self.get_account_with_fixed_root(vote_pubkey);
+            if let Some(account_from_db) = account_from_db {
+                if VoteStateVersions::is_correct_size_and_initialized(account_from_db.data())
+                    && VoteAccount::try_from(account_from_db.clone()).is_ok()
+                {
+                    panic!(
+                        "Vote account {vote_pubkey} not found in cache, but found in db: {account_from_db:?}"
+                    );
+                }
+            }
+        }
+        if vote_account_from_cache.is_none() {
+            debug!("could not find vote account {vote_pubkey} in cache");
+        }
+        vote_account_from_cache
+    }
+
     fn redeem_delegation_rewards(
         &self,
         rewarded_epoch: Epoch,
@@ -394,7 +419,6 @@ impl Bank {
                 outer(&RewardCalculationEvent::Staking(stake_pubkey, inner_event))
             }
         });
-        const ASSERT_STAKE_CACHE: bool = false; // Turn this on to assert that all vote accounts are in the cache
 
         let EpochRewardCalculateParamInfo {
             stake_history,
@@ -404,24 +428,7 @@ impl Bank {
 
         let stake_pubkey = *stake_pubkey;
         let vote_pubkey = stake_account.delegation().voter_pubkey;
-        let vote_account_from_cache = cached_vote_accounts.get(&vote_pubkey);
-        if ASSERT_STAKE_CACHE && vote_account_from_cache.is_none() {
-            let account_from_db = self.get_account_with_fixed_root(&vote_pubkey);
-            if let Some(account_from_db) = account_from_db {
-                if VoteStateVersions::is_correct_size_and_initialized(account_from_db.data())
-                    && VoteAccount::try_from(account_from_db.clone()).is_ok()
-                {
-                    panic!(
-                        "Vote account {vote_pubkey} not found in cache, but found in db: {account_from_db:?}"
-                    );
-                }
-            }
-        }
-
-        let Some(vote_account) = vote_account_from_cache else {
-            debug!("could not find vote account {vote_pubkey} in cache");
-            return None;
-        };
+        let vote_account = self.vote_account_from_cache(cached_vote_accounts, &vote_pubkey)?;
         let vote_state = vote_account.vote_state_view();
 
         match redeem_rewards(
