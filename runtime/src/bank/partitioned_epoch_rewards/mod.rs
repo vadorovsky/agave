@@ -93,8 +93,8 @@ impl PartitionedStakeRewards {
         self.rewards.set_len(self.rewards.capacity());
     }
 
-    fn set_len_some(&mut self, len_some: usize) {
-        self.num_rewards = len_some
+    fn set_num_stake_rewards(&mut self, num_stake_rewards: usize) {
+        self.num_rewards = num_stake_rewards
     }
 }
 

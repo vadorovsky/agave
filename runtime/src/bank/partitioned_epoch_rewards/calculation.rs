@@ -545,7 +545,7 @@ impl Bank {
             num_stake_rewards,
             total_stake_rewards_lamports,
         } = rewards_accumulator;
-        stake_rewards.set_len_some(num_stake_rewards);
+        stake_rewards.set_num_stake_rewards(num_stake_rewards);
         let vote_rewards = Self::calc_vote_accounts_to_store(vote_rewards);
         measure_redeem_rewards.stop();
         metrics.redeem_rewards_us = measure_redeem_rewards.as_us();
