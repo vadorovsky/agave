@@ -906,7 +906,7 @@ pub struct Bank {
 }
 
 #[derive(Debug)]
-struct VoteReward {
+pub(crate) struct VoteReward {
     vote_account: AccountSharedData,
     commission: u8,
     vote_rewards: u64,

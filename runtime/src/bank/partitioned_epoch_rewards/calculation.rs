@@ -2,9 +2,9 @@ use {
     super::{
         epoch_rewards_hasher::hash_rewards_into_partitions, Bank,
         CalculateRewardsAndDistributeVoteRewardsResult, CalculateValidatorRewardsResult,
-        EpochRewardCalculateParamInfo, PartitionedRewardsCalculation, PartitionedStakeReward,
-        PartitionedStakeRewards, StakeRewardCalculation, VoteRewardsAccounts,
-        VoteRewardsAccountsStorable, REWARD_CALCULATION_NUM_BLOCKS,
+        DelegationRewards, EpochRewardCalculateParamInfo, PartitionedRewardsCalculation,
+        PartitionedStakeReward, PartitionedStakeRewards, StakeRewardCalculation,
+        VoteRewardsAccounts, VoteRewardsAccountsStorable, REWARD_CALCULATION_NUM_BLOCKS,
     },
     crate::{
         bank::{
@@ -27,7 +27,10 @@ use {
     solana_clock::{Epoch, Slot},
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
-    solana_stake_interface::state::Delegation,
+    solana_stake_interface::{
+        stake_history::StakeHistory,
+        state::{Delegation, StakeStateV2},
+    },
     solana_sysvar::epoch_rewards::EpochRewards,
     solana_vote::vote_account::VoteAccount,
     solana_vote_program::vote_state::VoteStateVersions,
@@ -377,6 +380,78 @@ impl Bank {
         }
     }
 
+    fn assert_stake_cache(&self, vote_pubkey: &Pubkey) {
+        let account_from_db = self.get_account_with_fixed_root(vote_pubkey);
+        if let Some(account_from_db) = account_from_db {
+            if VoteStateVersions::is_correct_size_and_initialized(account_from_db.data())
+                && VoteAccount::try_from(account_from_db.clone()).is_ok()
+            {
+                panic!(
+                    "Vote account {} not found in cache, but found in db: {:?}",
+                    vote_pubkey, account_from_db
+                );
+            }
+        }
+    }
+
+    fn redeem_delegation_rewards(
+        &self,
+        rewarded_epoch: Epoch,
+        stake_pubkey: Pubkey,
+        stake_state: &mut StakeStateV2,
+        vote_pubkey: Pubkey,
+        vote_account: &VoteAccount,
+        point_value: &PointValue,
+        stake_history: &StakeHistory,
+        reward_calc_tracer: Option<impl RewardCalcTracer>,
+        new_rate_activation_epoch: Option<Epoch>,
+    ) -> Option<DelegationRewards> {
+        // curry closure to add the contextual stake_pubkey
+        let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
+            // inner
+            move |inner_event: &_| {
+                outer(&RewardCalculationEvent::Staking(&stake_pubkey, inner_event))
+            }
+        });
+
+        let vote_state = vote_account.vote_state_view();
+
+        match redeem_rewards(
+            rewarded_epoch,
+            stake_state,
+            vote_state,
+            point_value,
+            stake_history,
+            reward_calc_tracer,
+            new_rate_activation_epoch,
+        ) {
+            Ok((stake_reward, vote_rewards, stake)) => {
+                let commission = vote_state.commission();
+                let stake_reward = PartitionedStakeReward {
+                    stake_pubkey,
+                    stake,
+                    stake_reward,
+                    commission,
+                };
+                let vote_account = vote_account.into();
+                let vote_reward = VoteReward {
+                    commission,
+                    vote_account,
+                    vote_rewards,
+                };
+                Some(DelegationRewards {
+                    stake_reward,
+                    vote_pubkey,
+                    vote_reward,
+                })
+            }
+            Err(e) => {
+                debug!("redeem_rewards() failed for {stake_pubkey}: {e:?}");
+                None
+            }
+        }
+    }
+
     /// Calculates epoch rewards for stake/vote accounts
     /// Returns vote rewards, stake rewards, and the sum of all stake rewards in lamports
     fn calculate_stake_vote_rewards(
@@ -414,90 +489,57 @@ impl Bank {
                 .zip_eq(stake_rewards.spare_capacity_mut())
                 .with_min_len(500)
                 .filter_map(|((stake_pubkey, stake_account), stake_reward_ref)| {
-                    // curry closure to add the contextual stake_pubkey
-                    let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
-                        // inner
-                        move |inner_event: &_| {
-                            outer(&RewardCalculationEvent::Staking(stake_pubkey, inner_event))
-                        }
-                    });
-
                     let stake_pubkey = **stake_pubkey;
                     let vote_pubkey = stake_account.delegation().voter_pubkey;
                     let vote_account_from_cache = cached_vote_accounts.get(&vote_pubkey);
                     if ASSERT_STAKE_CACHE && vote_account_from_cache.is_none() {
-                        let account_from_db = self.get_account_with_fixed_root(&vote_pubkey);
-                        if let Some(account_from_db) = account_from_db {
-                            if VoteStateVersions::is_correct_size_and_initialized(
-                                account_from_db.data(),
-                            ) && VoteAccount::try_from(account_from_db.clone()).is_ok()
-                            {
-                                panic!(
-                                    "Vote account {} not found in cache, but found in db: {:?}",
-                                    vote_pubkey, account_from_db
-                                );
-                            }
-                        }
+                        self.assert_stake_cache(&vote_pubkey);
                     }
-                    let (stake_reward, res) = if let Some(vote_account) = vote_account_from_cache {
-                        let vote_state_view = vote_account.vote_state_view();
+                    let res = if let Some(vote_account) = vote_account_from_cache {
                         let mut stake_state = *stake_account.stake_state();
 
-                        let redeemed = redeem_rewards(
+                        self.redeem_delegation_rewards(
                             rewarded_epoch,
+                            stake_pubkey,
                             &mut stake_state,
-                            vote_state_view,
+                            vote_pubkey,
+                            vote_account,
                             &point_value,
                             stake_history,
                             reward_calc_tracer.as_ref(),
                             new_warmup_cooldown_rate_epoch,
-                        );
-
-                        if let Ok((stakers_reward, voters_reward)) = redeemed {
-                            let commission = vote_state_view.commission();
-
-                            // Safe to unwrap because all stake_delegations are type
-                            // StakeAccount<Delegation>, which will always only wrap
-                            // a `StakeStateV2::Stake` variant.
-                            let stake = stake_state.stake().unwrap();
-
-                            (
-                                Some(PartitionedStakeReward {
-                                    stake_pubkey,
-                                    stake_reward: stakers_reward,
-                                    stake,
-                                    commission,
-                                }),
-                                Some((
-                                    vote_pubkey,
-                                    VoteReward {
-                                        commission,
-                                        vote_account: vote_account.into(),
-                                        vote_rewards: voters_reward,
-                                    },
-                                    stakers_reward,
-                                )),
-                            )
-                        } else {
-                            debug!("redeem_rewards() failed for {stake_pubkey}: {redeemed:?}");
-                            (None, None)
-                        }
+                        )
                     } else {
                         debug!("could not find vote account {vote_pubkey} in cache");
-                        (None, None)
+                        None
+                    };
+                    let (stake_reward, res) = match res {
+                        Some(res) => {
+                            let DelegationRewards {
+                                stake_reward,
+                                vote_pubkey,
+                                vote_reward,
+                            } = res;
+                            let stakers_reward = stake_reward.stake_reward;
+                            (
+                                Some(stake_reward),
+                                Some((stakers_reward, vote_pubkey, vote_reward)),
+                            )
+                        }
+                        None => (None, None),
                     };
                     stake_reward_ref.write(stake_reward);
                     res
                 })
                 .fold(
-                    || RewardsAccumulator::default(),
-                    |mut rewards_accumulator, (vote_pubkey, vote_reward, stakers_reward)| {
-                        rewards_accumulator.add_reward(vote_pubkey, vote_reward, stakers_reward);
+                    RewardsAccumulator::default,
+                    |mut rewards_accumulator, (stake_reward, vote_pubkey, vote_reward)| {
+                        rewards_accumulator.add_reward(vote_pubkey, vote_reward, stake_reward);
                         rewards_accumulator
                     },
                 )
                 .reduce(
-                    || RewardsAccumulator::default(),
+                    RewardsAccumulator::default,
                     |rewards_accumulator_a, rewards_accumulator_b| {
                         rewards_accumulator_a + rewards_accumulator_b
                     },

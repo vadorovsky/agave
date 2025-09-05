@@ -31,7 +31,7 @@ pub fn redeem_rewards(
     stake_history: &StakeHistory,
     inflation_point_calc_tracer: Option<impl Fn(&InflationPointCalculationEvent)>,
     new_rate_activation_epoch: Option<Epoch>,
-) -> Result<(u64, u64), InstructionError> {
+) -> Result<(u64, u64, Stake), InstructionError> {
     if let StakeStateV2::Stake(meta, stake, _stake_flags) = stake_state {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer.as_ref() {
             inflation_point_calc_tracer(
@@ -58,7 +58,7 @@ pub fn redeem_rewards(
             inflation_point_calc_tracer,
             new_rate_activation_epoch,
         ) {
-            Ok((stakers_reward, voters_reward))
+            Ok((stakers_reward, voters_reward, *stake))
         } else {
             Err(StakeError::NoCreditsToRedeem.into())
         }

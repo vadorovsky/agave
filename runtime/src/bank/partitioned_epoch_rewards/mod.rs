@@ -4,7 +4,7 @@ mod epoch_rewards_hasher;
 mod sysvar;
 
 use {
-    super::Bank,
+    super::{Bank, VoteReward},
     crate::{
         inflation_rewards::points::PointValue, stake_account::StakeAccount,
         stake_history::StakeHistory,
@@ -152,6 +152,13 @@ pub(crate) enum EpochRewardStatus {
 pub(crate) enum EpochRewardPhase {
     Calculation(StartBlockHeightAndRewards),
     Distribution(StartBlockHeightAndPartitionedRewards),
+}
+
+#[derive(Debug)]
+pub(super) struct DelegationRewards {
+    stake_reward: PartitionedStakeReward,
+    vote_pubkey: Pubkey,
+    vote_reward: VoteReward,
 }
 
 #[derive(Debug, Default)]
