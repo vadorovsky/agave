@@ -156,6 +156,7 @@ impl FeatureSet {
             reenable_zk_elgamal_proof_program: self
                 .is_active(&reenable_zk_elgamal_proof_program::id()),
             raise_cpi_nesting_limit_to_8: self.is_active(&raise_cpi_nesting_limit_to_8::id()),
+            poseidon_enforce_padding: self.is_active(&poseidon_enforce_padding::id()),
         }
     }
 }
@@ -1126,6 +1127,10 @@ pub mod enforce_fixed_fec_set {
     solana_pubkey::declare_id!("fixfecLZYMfkGzwq6NJA11Yw6KYztzXiK9QcL3K78in");
 }
 
+pub mod poseidon_enforce_padding {
+    solana_pubkey::declare_id!("1111111111111111111111111111111111111111111");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2034,6 +2039,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             enforce_fixed_fec_set::id(),
             "SIMD-0317: Enforce 32 data + 32 coding shreds",
+        ),
+        (
+            poseidon_enforce_padding::id(),
+            "Enforce padding in Poseidon hash inputs",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
