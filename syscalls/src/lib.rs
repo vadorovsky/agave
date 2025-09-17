@@ -51,6 +51,7 @@ use {
     solana_transaction_context::vm_slice::VmSlice,
     std::{
         alloc::Layout,
+        borrow::Cow,
         mem::{align_of, size_of},
         slice::from_raw_parts_mut,
         str::{from_utf8, Utf8Error},
@@ -1745,16 +1746,52 @@ declare_builtin_function!(
             vals_len,
             invoke_context.get_check_aligned(),
         )?;
-        let inputs = inputs
-            .iter()
-            .map(|input| {
-                translate_vm_slice(input, memory_mapping, invoke_context.get_check_aligned())
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
+        let inputs = inputs.iter().map(|input| {
+            translate_vm_slice(input, memory_mapping, invoke_context.get_check_aligned())
+        });
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
             .get_feature_set()
             .simplify_alt_bn128_syscall_error_codes;
+
+        let inputs = if invoke_context.get_feature_set().poseidon_enforce_padding {
+            inputs
+                .map(|input| input.map(|input| Cow::Borrowed(input)))
+                .collect::<Result<Vec<_>, Error>>()?
+        } else {
+            // The newest light-poseidon enforces padding. To keep the
+            // compatibility with the old behavior (no padding required), add
+            // the padding manually.
+            inputs
+                .map(|input| {
+                    input.map(|input| {
+                        let modulus_len: usize = match parameters {
+                            poseidon::Parameters::Bn254X5 => 32,
+                        };
+                        let input = if input.len() < modulus_len {
+                            let mut padded_input = vec![0u8; modulus_len];
+                            match endianness {
+                                poseidon::Endianness::BigEndian => {
+                                    padded_input[..input.len()].copy_from_slice(&input);
+                                }
+                                poseidon::Endianness::LittleEndian => {
+                                    padded_input[(modulus_len - input.len())..]
+                                        .copy_from_slice(&input);
+                                }
+                            }
+                            Cow::Owned(padded_input)
+                        } else {
+                            Cow::Borrowed(input)
+                        };
+                        input
+                    })
+                })
+                .collect::<Result<Vec<_>, Error>>()?
+        };
+        let inputs = inputs
+            .iter()
+            .map(|input| input.as_ref())
+            .collect::<Vec<_>>();
 
         let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
             Ok(hash) => hash,
@@ -2065,7 +2102,7 @@ mod tests {
             execution_budget::MAX_HEAP_FRAME_BYTES,
             invoke_context::{BpfAllocator, InvokeContext, SyscallContext},
             memory::address_is_aligned,
-            with_mock_invoke_context,
+            with_mock_invoke_context, with_mock_invoke_context_with_feature_set,
         },
         solana_sbpf::{
             aligned_memory::AlignedMemory,
@@ -4742,6 +4779,176 @@ mod tests {
                 Result::Err(error) if error.downcast_ref::<SyscallError>().unwrap() == &SyscallError::InvalidLength
             );
         }
+    }
+
+    #[test]
+    fn test_syscall_poseidon() {
+        fn test_case(
+            enforce_padding: bool,
+            endianness: poseidon::Endianness,
+            input: &[u8],
+            expected_result: u64,
+            expected_hash: [u8; 32],
+        ) {
+            let config = Config::default();
+
+            let feature_set = &SVMFeatureSet {
+                enable_poseidon_syscall: true,
+                simplify_alt_bn128_syscall_error_codes: true,
+                poseidon_enforce_padding: enforce_padding,
+                ..Default::default()
+            };
+            with_mock_invoke_context_with_feature_set!(
+                invoke_context,
+                transaction_context,
+                feature_set,
+                vec![]
+            );
+
+            let mock_slice = MockSlice {
+                vm_addr: 0x300000000,
+                len: input.len(),
+            };
+
+            let inputs = [mock_slice];
+            let ro_va = 0x100000000;
+            let ro_len = inputs.len() as u64;
+
+            let mut hash_result = [0; 32];
+            let rw_va = 0x200000000;
+
+            let mut memory_mapping = MemoryMapping::new(
+                vec![
+                    MemoryRegion::new_readonly(bytes_of_slice(&inputs), ro_va),
+                    MemoryRegion::new_writable(bytes_of_slice_mut(&mut hash_result), rw_va),
+                    MemoryRegion::new_readonly(input, inputs[0].vm_addr),
+                ],
+                &config,
+                SBPFVersion::V3,
+            )
+            .unwrap();
+
+            let result = SyscallPoseidon::rust(
+                &mut invoke_context,
+                poseidon::Parameters::Bn254X5 as u64,
+                endianness as u64,
+                ro_va,
+                ro_len,
+                rw_va,
+                &mut memory_mapping,
+            )
+            .expect("sycall should succeed regardless of the result");
+
+            assert_eq!(result, expected_result);
+            assert_eq!(hash_result, expected_hash);
+        }
+
+        let expected_le_hash = [
+            149, 212, 229, 196, 191, 187, 221, 245, 207, 223, 170, 117, 235, 109, 86, 174, 199, 98,
+            235, 241, 133, 196, 145, 37, 65, 48, 171, 20, 148, 65, 181, 19,
+        ];
+        let expected_be_hash = [
+            19, 181, 65, 148, 20, 171, 48, 65, 37, 145, 196, 133, 241, 235, 98, 199, 174, 86, 109,
+            235, 117, 170, 223, 207, 245, 221, 187, 191, 196, 229, 212, 149,
+        ];
+
+        // With enforced padding.
+        test_case(
+            true,
+            poseidon::Endianness::LittleEndian,
+            &[
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 1,
+            ], /* 32 bytes */
+            0, /* success */
+            expected_le_hash,
+        );
+        test_case(
+            true,
+            poseidon::Endianness::BigEndian,
+            &[
+                1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0,
+            ], /* 32 bytes */
+            0, /* success */
+            expected_be_hash,
+        );
+        test_case(
+            true,
+            poseidon::Endianness::LittleEndian,
+            &[
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 1,
+            ], /* 31 bytes */
+            1, /* error */
+            [0; 32],
+        );
+        test_case(
+            true,
+            poseidon::Endianness::BigEndian,
+            &[
+                1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0,
+            ], /* 31 bytes */
+            1, /* error */
+            [0; 32],
+        );
+
+        // Without enforced padding.
+        test_case(
+            false,
+            poseidon::Endianness::LittleEndian,
+            &[
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 1,
+            ], /* 32 bytes */
+            0, /* success */
+            expected_le_hash,
+        );
+        test_case(
+            false,
+            poseidon::Endianness::BigEndian,
+            &[
+                1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0,
+            ], /* 32 bytes */
+            0, /* success */
+            expected_be_hash,
+        );
+        test_case(
+            false,
+            poseidon::Endianness::LittleEndian,
+            &[
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 1,
+            ], /* 31 bytes */
+            0, /* success */
+            expected_le_hash,
+        );
+        test_case(
+            false,
+            poseidon::Endianness::BigEndian,
+            &[
+                1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0,
+            ], /* 31 bytes */
+            0, /* success */
+            expected_be_hash,
+        );
+        test_case(
+            false,
+            poseidon::Endianness::LittleEndian,
+            &[0, 0, 0, 1], /* 4 bytes */
+            0,             /* success */
+            expected_le_hash,
+        );
+        test_case(
+            false,
+            poseidon::Endianness::BigEndian,
+            &[1, 0, 0, 0], /* 4 bytes */
+            0,             /* success */
+            expected_be_hash,
+        );
     }
 
     #[test]
