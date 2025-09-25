@@ -17,7 +17,7 @@ use {
     std::{
         collections::HashMap,
         ops::{Deref, DerefMut},
-        sync::{Arc, RwLock, RwLockReadGuard},
+        sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
     },
     thiserror::Error,
 };
@@ -62,6 +62,10 @@ impl StakesCache {
 
     pub(crate) fn stakes(&self) -> RwLockReadGuard<Stakes<StakeAccount>> {
         self.0.read().unwrap()
+    }
+
+    pub(crate) fn stakes_mut(&mut self) -> RwLockWriteGuard<Stakes<StakeAccount>> {
+        self.0.write().unwrap()
     }
 
     pub(crate) fn check_and_store(
@@ -137,14 +141,20 @@ impl StakesCache {
         }
     }
 
-    pub(crate) fn activate_epoch(
+    pub(crate) fn activate_epoch<'a>(
         &self,
         next_epoch: Epoch,
         thread_pool: &ThreadPool,
+        stake_delegations: &[(&Pubkey, &StakeAccount)],
         new_rate_activation_epoch: Option<Epoch>,
     ) {
         let mut stakes = self.0.write().unwrap();
-        stakes.activate_epoch(next_epoch, thread_pool, new_rate_activation_epoch)
+        stakes.activate_epoch(
+            next_epoch,
+            thread_pool,
+            stake_delegations,
+            new_rate_activation_epoch,
+        )
     }
 }
 
@@ -349,13 +359,13 @@ impl Stakes<StakeAccount> {
         &self.stake_history
     }
 
-    fn activate_epoch(
+    pub(crate) fn activate_epoch(
         &mut self,
         next_epoch: Epoch,
         thread_pool: &ThreadPool,
+        stake_delegations: &[(&Pubkey, &StakeAccount)],
         new_rate_activation_epoch: Option<Epoch>,
     ) {
-        let stake_delegations: Vec<_> = self.stake_delegations.values().collect();
         // Wrap up the prev epoch by adding new stake history entry for the
         // prev epoch.
         let (stake_history_entry, vote_accounts_accumulator) = thread_pool.install(|| {
@@ -369,7 +379,7 @@ impl Stakes<StakeAccount> {
                             VoteAccountsAccumulator::default(),
                         )
                     },
-                    |(stake_history_entry, mut vote_accounts_accumulator), stake_account| {
+                    |(stake_history_entry, mut vote_accounts_accumulator), (_, stake_account)| {
                         let delegation = stake_account.delegation();
                         let stake_history_entry = stake_history_entry
                             + delegation.stake_activating_and_deactivating(
@@ -498,6 +508,22 @@ impl Stakes<StakeAccount> {
 
     pub(crate) fn stake_delegations(&self) -> &ImHashMap<Pubkey, StakeAccount> {
         &self.stake_delegations
+    }
+
+    /// Returns stake delegations as a [`Vec`].
+    ///
+    /// Stake delegations are stored as [`ImHashMap`], which is a tree and
+    /// works great as a cheaply clonable map with reasonable lookup times.
+    ///
+    /// However, iterations over [`ImHashMap`] are slow and using rayon on it
+    /// is impossible. For parallel iterations, the best option is to collect
+    /// into a [`Vec`].
+    ///
+    /// To avoid copying data, this function returns a [`Vec`] of references.
+    ///
+    /// This function is expensive, use with care.
+    pub(crate) fn stake_delegations_vec(&self) -> Vec<(&Pubkey, &StakeAccount)> {
+        self.stake_delegations().iter().collect()
     }
 
     pub(crate) fn highest_staked_node(&self) -> Option<&Pubkey> {
@@ -871,7 +897,9 @@ pub(crate) mod tests {
             );
         }
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        stakes_cache.activate_epoch(3, &thread_pool, None);
+        let stakes = stakes_cache.stakes();
+        let stake_delegations = stakes.stake_delegations_vec();
+        stakes_cache.activate_epoch(3, &thread_pool, &stake_delegations, None);
         {
             let stakes = stakes_cache.stakes();
             let vote_accounts = stakes.vote_accounts();
