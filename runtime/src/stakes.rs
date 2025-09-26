@@ -15,7 +15,7 @@ use {
     solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
     solana_vote_interface::state::VoteStateVersions,
     std::{
-        collections::HashMap,
+        collections::{HashMap, HashSet},
         ops::{Deref, DerefMut},
         sync::{Arc, RwLock, RwLockReadGuard},
     },
@@ -404,6 +404,12 @@ impl Stakes<StakeAccount> {
                     },
                 )
         });
+        let new_keys: HashSet<_> = vote_accounts_accumulator.keys().into_iter().collect();
+        let old_keys: HashSet<_> = self.vote_accounts().iter().map(|(key, _)| key).collect();
+        let diff: HashSet<_> = new_keys.difference(&old_keys).collect();
+        if !diff.is_empty() {
+            panic!("DIFF: {diff:?}");
+        }
         self.stake_history.add(self.epoch, stake_history_entry);
         self.epoch = next_epoch;
         // Refresh the stake distribution of vote accounts for the next epoch,
