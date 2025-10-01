@@ -16,7 +16,7 @@ use {
     solana_vote_interface::state::VoteStateVersions,
     std::{
         collections::HashMap,
-        ops::{Deref, DerefMut},
+        ops::{Add, Deref, DerefMut},
         sync::{Arc, RwLock, RwLockReadGuard},
     },
     thiserror::Error,
@@ -358,57 +358,31 @@ impl Stakes<StakeAccount> {
         let stake_delegations: Vec<_> = self.stake_delegations.values().collect();
         // Wrap up the prev epoch by adding new stake history entry for the
         // prev epoch.
-        let (stake_history_entry, vote_accounts_accumulator) = thread_pool.install(|| {
+        let stake_history_entry = thread_pool.install(|| {
             stake_delegations
                 .par_iter()
-                .with_min_len(2500)
-                .fold(
-                    || {
-                        (
-                            StakeActivationStatus::default(),
-                            VoteAccountsAccumulator::default(),
-                        )
-                    },
-                    |(stake_history_entry, mut vote_accounts_accumulator), stake_account| {
-                        let delegation = stake_account.delegation();
-                        let stake_history_entry = stake_history_entry
-                            + delegation.stake_activating_and_deactivating(
-                                self.epoch,
-                                &self.stake_history,
-                                new_rate_activation_epoch,
-                            );
-                        vote_accounts_accumulator.add_delegation(
-                            stake_account.delegation(),
-                            self.epoch,
-                            &self.stake_history,
-                            &self.vote_accounts,
-                            new_rate_activation_epoch,
-                        );
-                        (stake_history_entry, vote_accounts_accumulator)
-                    },
-                )
-                .reduce(
-                    || {
-                        (
-                            StakeActivationStatus::default(),
-                            VoteAccountsAccumulator::default(),
-                        )
-                    },
-                    |(stake_history_entry_a, vote_accounts_accumulator_a),
-                     (stake_history_entry_b, vote_accounts_accumulator_b)| {
-                        (
-                            stake_history_entry_a + stake_history_entry_b,
-                            vote_accounts_accumulator_a
-                                .accumulate_into_larger(vote_accounts_accumulator_b),
-                        )
-                    },
-                )
+                .fold(StakeActivationStatus::default, |acc, stake_account| {
+                    let delegation = stake_account.delegation();
+                    acc + delegation.stake_activating_and_deactivating(
+                        self.epoch,
+                        &self.stake_history,
+                        new_rate_activation_epoch,
+                    )
+                })
+                .reduce(StakeActivationStatus::default, Add::add)
         });
         self.stake_history.add(self.epoch, stake_history_entry);
         self.epoch = next_epoch;
         // Refresh the stake distribution of vote accounts for the next epoch,
         // using new stake history.
-        self.vote_accounts = vote_accounts_accumulator.into_vote_accounts();
+        self.vote_accounts = refresh_vote_accounts(
+            thread_pool,
+            self.epoch,
+            &self.vote_accounts,
+            &stake_delegations,
+            &self.stake_history,
+            new_rate_activation_epoch,
+        );
     }
 
     /// Sum the stakes that point to the given voter_pubkey
@@ -564,6 +538,38 @@ impl From<Stakes<Stake>> for Stakes<Delegation> {
             stake_history: stakes.stake_history,
         }
     }
+}
+
+fn refresh_vote_accounts(
+    thread_pool: &ThreadPool,
+    epoch: Epoch,
+    vote_accounts: &VoteAccounts,
+    stake_delegations: &[&StakeAccount],
+    stake_history: &StakeHistory,
+    new_rate_activation_epoch: Option<Epoch>,
+) -> VoteAccounts {
+    let vote_accounts_accumulator = thread_pool.install(|| {
+        stake_delegations
+            .par_iter()
+            .with_min_len(2500)
+            .fold(
+                VoteAccountsAccumulator::default,
+                |mut acc, stake_account| {
+                    acc.add_delegation(
+                        stake_account.delegation(),
+                        epoch,
+                        stake_history,
+                        vote_accounts,
+                        new_rate_activation_epoch,
+                    );
+                    acc
+                },
+            )
+            .reduce(VoteAccountsAccumulator::default, |acc_a, acc_b| {
+                acc_a.accumulate_into_larger(acc_b)
+            })
+    });
+    vote_accounts_accumulator.into_vote_accounts()
 }
 
 #[cfg(test)]
