@@ -169,18 +169,11 @@ impl Bank {
             total_vote_rewards, point_value.rewards, total_stake_rewards_lamports
         );
 
-        let (num_stake_accounts, num_vote_accounts) = {
-            let stakes = self.stakes_cache.stakes();
-            (
-                stakes.stake_delegations().len(),
-                stakes.vote_accounts().len(),
-            )
-        };
+        let (num_stake_accounts, num_vote_accounts) =
+            { (stake_delegations.len(), cached_vote_accounts.len()) };
         self.capitalization.fetch_add(total_vote_rewards, Relaxed);
 
-        let active_stake = if let Some(stake_history_entry) =
-            self.stakes_cache.stakes().history().get(prev_epoch)
-        {
+        let active_stake = if let Some(stake_history_entry) = stake_history.get(prev_epoch) {
             stake_history_entry.effective
         } else {
             0

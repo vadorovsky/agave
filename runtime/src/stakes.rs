@@ -17,7 +17,7 @@ use {
     std::{
         collections::HashMap,
         ops::Add,
-        sync::{Arc, RwLock, RwLockReadGuard},
+        sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
     },
     thiserror::Error,
 };
@@ -62,6 +62,10 @@ impl StakesCache {
 
     pub(crate) fn stakes(&self) -> RwLockReadGuard<Stakes<StakeAccount>> {
         self.0.read().unwrap()
+    }
+
+    pub(crate) fn stakes_mut(&self) -> RwLockWriteGuard<Stakes<StakeAccount>> {
+        self.0.write().unwrap()
     }
 
     pub(crate) fn check_and_store(
@@ -135,16 +139,6 @@ impl StakesCache {
                 }
             }
         }
-    }
-
-    pub(crate) fn activate_epoch(
-        &self,
-        next_epoch: Epoch,
-        stake_history: StakeHistory,
-        vote_accounts: VoteAccounts,
-    ) {
-        let mut stakes = self.0.write().unwrap();
-        stakes.activate_epoch(next_epoch, stake_history, vote_accounts)
     }
 }
 
@@ -820,7 +814,7 @@ pub(crate) mod tests {
         let stake = stake_state::stake_from(&stake_account).unwrap();
 
         {
-            let stakes = stakes_cache.stakes();
+            let mut stakes = stakes_cache.stakes_mut();
             let stake_delegations: Vec<_> = stakes.stake_delegations().iter().collect();
             let vote_accounts = stakes.vote_accounts();
             assert_eq!(
@@ -831,8 +825,8 @@ pub(crate) mod tests {
             let (stake_history, vote_accounts) =
                 stakes.begin_epoch_activation(&thread_pool, &stake_delegations, None);
             drop(stake_delegations);
+            stakes.activate_epoch(3, stake_history, vote_accounts);
             drop(stakes);
-            stakes_cache.activate_epoch(3, stake_history, vote_accounts);
         }
         {
             let stakes = stakes_cache.stakes();

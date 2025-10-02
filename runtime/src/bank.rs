@@ -48,7 +48,6 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_hash::SnapshotHash,
         stake_account::StakeAccount,
-        stake_history::StakeHistory as CowStakeHistory,
         stake_weighted_timestamp::{
             calculate_stake_weighted_timestamp, MaxAllowableDrift,
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
@@ -165,7 +164,7 @@ use {
     },
     solana_transaction_context::{transaction_accounts::TransactionAccount, TransactionReturnData},
     solana_transaction_error::{TransactionError, TransactionResult as Result},
-    solana_vote::vote_account::{VoteAccount, VoteAccounts, VoteAccountsHashMap},
+    solana_vote::vote_account::{VoteAccount, VoteAccountsHashMap},
     std::{
         collections::{HashMap, HashSet},
         fmt,
@@ -1018,8 +1017,6 @@ impl AtomicBankHashStats {
 }
 
 struct NewEpochBundle {
-    stake_history: CowStakeHistory,
-    vote_accounts: VoteAccounts,
     rewards_result: CalculateRewardsAndDistributeVoteRewardsResult,
     rewards_metrics: RewardsMetrics,
     activate_epoch_time_us: u64,
@@ -1582,11 +1579,12 @@ impl Bank {
 
     fn process_new_epoch_read_and_compute(
         &self,
+        epoch: Epoch,
         parent_epoch: Epoch,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         thread_pool: &ThreadPool,
     ) -> NewEpochBundle {
-        let stakes = self.stakes_cache.stakes();
+        let mut stakes = self.stakes_cache.stakes_mut();
         let stake_delegations: Vec<_> = stakes.stake_delegations().iter().collect();
 
         // Compute new stake history and vote accounts.
@@ -1610,9 +1608,13 @@ impl Bank {
                 &mut rewards_metrics
             ));
 
+        // Add new entry to stakes.stake_history, set appropriate epoch and
+        // update vote accounts with warmed up stakes before saving a
+        // snapshot of stakes in epoch stakes.
+        // self.stakes_cache
+        stakes.activate_epoch(epoch, stake_history, vote_accounts);
+
         NewEpochBundle {
-            stake_history,
-            vote_accounts,
             rewards_result,
             rewards_metrics,
             activate_epoch_time_us,
@@ -1640,19 +1642,18 @@ impl Bank {
         );
 
         let NewEpochBundle {
-            stake_history,
-            vote_accounts,
             rewards_result,
             rewards_metrics,
             activate_epoch_time_us,
             update_rewards_with_thread_pool_time_us,
-        } = self.process_new_epoch_read_and_compute(parent_epoch, reward_calc_tracer, &thread_pool);
+            ..
+        } = self.process_new_epoch_read_and_compute(
+            epoch,
+            parent_epoch,
+            reward_calc_tracer,
+            &thread_pool,
+        );
 
-        // Add new entry to stakes.stake_history, set appropriate epoch and
-        // update vote accounts with warmed up stakes before saving a
-        // snapshot of stakes in epoch stakes.
-        self.stakes_cache
-            .activate_epoch(epoch, stake_history, vote_accounts);
         // Save a snapshot of stakes for use in consensus and stake weighted
         // networking.
         let leader_schedule_epoch = self.epoch_schedule.get_leader_schedule_epoch(self.slot());
