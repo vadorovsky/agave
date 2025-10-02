@@ -41,8 +41,8 @@ const INTERVAL_MS: u64 = 100;
 const CLEAN_INTERVAL: Duration = Duration::from_secs(50);
 const SHRINK_INTERVAL: Duration = Duration::from_secs(1);
 
-pub type SnapshotRequestSender = Sender<SnapshotRequest>;
-pub type SnapshotRequestReceiver = Receiver<SnapshotRequest>;
+pub type SnapshotRequestSender<'a> = Sender<SnapshotRequest<'a>>;
+pub type SnapshotRequestReceiver<'a> = Receiver<SnapshotRequest<'a>>;
 pub type DroppedSlotsSender = Sender<(Slot, BankId)>;
 pub type DroppedSlotsReceiver = Receiver<(Slot, BankId)>;
 
@@ -102,8 +102,8 @@ impl SendDroppedBankCallback {
     }
 }
 
-pub struct SnapshotRequest {
-    pub snapshot_root_bank: Arc<Bank>,
+pub struct SnapshotRequest<'a> {
+    pub snapshot_root_bank: Arc<Bank<'a>>,
     pub status_cache_slot_deltas: Vec<BankSlotDelta>,
     pub request_kind: SnapshotRequestKind,
 
@@ -112,7 +112,7 @@ pub struct SnapshotRequest {
     pub enqueued: Instant,
 }
 
-impl Debug for SnapshotRequest {
+impl Debug for SnapshotRequest<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SnapshotRequest")
             .field("request kind", &self.request_kind)
@@ -129,13 +129,13 @@ pub enum SnapshotRequestKind {
     IncrementalSnapshot,
 }
 
-pub struct SnapshotRequestHandler {
-    pub snapshot_controller: Arc<SnapshotController>,
-    pub snapshot_request_receiver: SnapshotRequestReceiver,
+pub struct SnapshotRequestHandler<'a> {
+    pub snapshot_controller: Arc<SnapshotController<'a>>,
+    pub snapshot_request_receiver: SnapshotRequestReceiver<'a>,
     pub pending_snapshot_packages: Arc<Mutex<PendingSnapshotPackages>>,
 }
 
-impl SnapshotRequestHandler {
+impl SnapshotRequestHandler<'_> {
     // Returns the latest requested snapshot slot and storages
     #[allow(clippy::type_complexity)]
     pub fn handle_snapshot_requests(
@@ -399,12 +399,12 @@ impl PrunedBanksRequestHandler {
     }
 }
 
-pub struct AbsRequestHandlers {
-    pub snapshot_request_handler: SnapshotRequestHandler,
+pub struct AbsRequestHandlers<'a> {
+    pub snapshot_request_handler: SnapshotRequestHandler<'a>,
     pub pruned_banks_request_handler: PrunedBanksRequestHandler,
 }
 
-impl AbsRequestHandlers {
+impl AbsRequestHandlers<'_> {
     // Returns the latest requested snapshot slot, if one exists
     #[allow(clippy::type_complexity)]
     pub fn handle_snapshot_requests(

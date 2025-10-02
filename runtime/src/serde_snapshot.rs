@@ -799,7 +799,7 @@ pub(crate) struct ReconstructedBankInfo {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn reconstruct_bank_from_fields<E>(
+pub(crate) fn reconstruct_bank_from_fields<'a, E>(
     bank_fields: SnapshotBankFields,
     snapshot_accounts_db_fields: SnapshotAccountsDbFields<E>,
     genesis_config: &GenesisConfig,
@@ -812,7 +812,7 @@ pub(crate) fn reconstruct_bank_from_fields<E>(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> Result<(Bank, ReconstructedBankInfo), Error>
+) -> Result<(Bank<'a>, ReconstructedBankInfo), Error>
 where
     E: SerializableStorage + std::marker::Sync,
 {

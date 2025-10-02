@@ -27,7 +27,7 @@ use {
     solana_transaction_error::{TransactionError, TransactionResult},
 };
 
-impl Bank {
+impl Bank<'_> {
     /// Checks a batch of sanitized transactions again bank for age and status
     pub fn check_transactions_with_forwarding_delay(
         &self,

@@ -6,7 +6,7 @@ use {
     solana_sysvar as sysvar,
 };
 
-impl Bank {
+impl Bank<'_> {
     /// Helper fn to log epoch_rewards sysvar
     fn log_epoch_rewards_sysvar(&self, prefix: &str) {
         if let Some(account) = self.get_account(&sysvar::epoch_rewards::id()) {

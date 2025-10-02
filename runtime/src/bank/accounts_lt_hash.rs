@@ -5,7 +5,7 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
 };
 
-impl Bank {
+impl Bank<'_> {
     /// Updates the accounts lt hash, inline with transaction processing
     ///
     /// Note that it is critical this fn is called *BEFORE* `accounts` have actually been stored!

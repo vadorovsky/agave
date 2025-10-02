@@ -22,7 +22,7 @@ impl<T> Deref for OwnedOrBorrowed<'_, T> {
 // Represents the results of trying to lock a set of accounts
 pub struct TransactionBatch<'a, 'b, Tx: SVMMessage> {
     lock_results: Vec<Result<()>>,
-    bank: &'a Bank,
+    bank: &'a Bank<'a>,
     sanitized_txs: OwnedOrBorrowed<'b, Tx>,
     needs_unlock: bool,
 }

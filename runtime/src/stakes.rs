@@ -16,7 +16,7 @@ use {
     solana_vote_interface::state::VoteStateVersions,
     std::{
         collections::HashMap,
-        ops::Add,
+        ops::{Add, Deref, DerefMut},
         sync::{Arc, RwLock, RwLockReadGuard},
     },
     thiserror::Error,
@@ -53,14 +53,47 @@ type StakeAccount = stake_account::StakeAccount<Delegation>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Default, Debug)]
-pub(crate) struct StakesCache(RwLock<Stakes<StakeAccount>>);
+pub(crate) struct StakesCacheInner<'a> {
+    /// Stakes.
+    stakes: Stakes<StakeAccount>,
 
-impl StakesCache {
+    /// Stake delegations cached in a form of vector for fast, concurrent
+    /// iterations.
+    cached_stake_delegations: Option<Vec<(&'a Pubkey, &'a StakeAccount)>>,
+}
+
+impl StakesCacheInner<'_> {
+    fn new(stakes: Stakes<StakeAccount>) -> Self {
+        Self {
+            stakes,
+            cached_stake_delegations: None,
+        }
+    }
+}
+
+impl Deref for StakesCacheInner<'_> {
+    type Target = Stakes<StakeAccount>;
+    fn deref(&self) -> &Self::Target {
+        &self.stakes
+    }
+}
+
+impl DerefMut for StakesCacheInner<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.stakes
+    }
+}
+
+#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
+#[derive(Default, Debug)]
+pub(crate) struct StakesCache<'a>(RwLock<StakesCacheInner<'a>>);
+
+impl<'a> StakesCache<'a> {
     pub(crate) fn new(stakes: Stakes<StakeAccount>) -> Self {
         Self(RwLock::new(stakes))
     }
 
-    pub(crate) fn stakes(&self) -> RwLockReadGuard<Stakes<StakeAccount>> {
+    pub(crate) fn stakes(&self) -> RwLockReadGuard<StakesCacheInner<'a>> {
         self.0.read().unwrap()
     }
 

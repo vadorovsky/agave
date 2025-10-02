@@ -252,12 +252,12 @@ pub type SchedulerId = u64;
 /// There's a special construction only used for scheduler preallocation, which has no bank. Panics
 /// will be triggered when tried to be used normally across code-base.
 #[derive(Clone, Debug)]
-pub struct SchedulingContext {
+pub struct SchedulingContext<'a> {
     mode: SchedulingMode,
-    bank: Option<Arc<Bank>>,
+    bank: Option<Arc<Bank<'a>>>,
 }
 
-impl SchedulingContext {
+impl SchedulingContext<'_> {
     pub fn for_preallocation() -> Self {
         Self {
             mode: SchedulingMode::BlockProduction,
@@ -437,18 +437,18 @@ impl SchedulerStatus {
 /// clone_without_scheduler() for Arc<Bank>. Otherwise, use clone_with_scheduler() (this should be
 /// unusual outside scheduler code-path)
 #[derive(Debug)]
-pub struct BankWithScheduler {
-    inner: Arc<BankWithSchedulerInner>,
+pub struct BankWithScheduler<'a> {
+    inner: Arc<BankWithSchedulerInner<'a>>,
 }
 
 #[derive(Debug)]
-pub struct BankWithSchedulerInner {
-    bank: Arc<Bank>,
+pub struct BankWithSchedulerInner<'a> {
+    bank: Arc<Bank<'a>>,
     scheduler: InstalledSchedulerRwLock,
 }
 pub type InstalledSchedulerRwLock = RwLock<SchedulerStatus>;
 
-impl BankWithScheduler {
+impl BankWithScheduler<'_> {
     /// Creates a new `BankWithScheduler` from bank and its associated scheduler.
     ///
     /// # Panics
@@ -588,7 +588,7 @@ impl BankWithScheduler {
     }
 }
 
-impl BankWithSchedulerInner {
+impl BankWithSchedulerInner<'_> {
     fn with_active_scheduler(
         self: &Arc<Self>,
         f: impl FnOnce(&InstalledSchedulerBox) -> ScheduleResult,
@@ -777,14 +777,14 @@ impl BankWithSchedulerInner {
     }
 }
 
-impl Drop for BankWithSchedulerInner {
+impl Drop for BankWithSchedulerInner<'_> {
     fn drop(&mut self) {
         self.drop_scheduler();
     }
 }
 
-impl Deref for BankWithScheduler {
-    type Target = Arc<Bank>;
+impl<'a> Deref for BankWithScheduler<'a> {
+    type Target = Arc<Bank<'a>>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner.bank

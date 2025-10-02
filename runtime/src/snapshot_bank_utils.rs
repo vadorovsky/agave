@@ -125,13 +125,13 @@ fn bank_fields_from_snapshots(
 /// Rebuild bank from snapshot archives.  Handles either just a full snapshot, or both a full
 /// snapshot and an incremental snapshot.
 #[allow(clippy::too_many_arguments)]
-pub fn bank_from_snapshot_archives(
-    account_paths: &[PathBuf],
+pub fn bank_from_snapshot_archives<'a>(
+    account_paths: &'a [PathBuf],
     bank_snapshots_dir: impl AsRef<Path>,
-    full_snapshot_archive_info: &FullSnapshotArchiveInfo,
-    incremental_snapshot_archive_info: Option<&IncrementalSnapshotArchiveInfo>,
-    genesis_config: &GenesisConfig,
-    runtime_config: &RuntimeConfig,
+    full_snapshot_archive_info: &'a FullSnapshotArchiveInfo,
+    incremental_snapshot_archive_info: Option<&'a IncrementalSnapshotArchiveInfo>,
+    genesis_config: &'a GenesisConfig,
+    runtime_config: &'a RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     accounts_db_skip_shrink: bool,
@@ -140,7 +140,7 @@ pub fn bank_from_snapshot_archives(
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<Bank> {
+) -> snapshot_utils::Result<Bank<'a>> {
     info!(
         "Loading bank from full snapshot archive: {}, and incremental snapshot archive: {:?}",
         full_snapshot_archive_info.path().display(),
@@ -268,13 +268,13 @@ pub fn bank_from_snapshot_archives(
 /// This function searches `full_snapshot_archives_dir` and `incremental_snapshot_archives_dir` for
 /// the highest full snapshot and highest corresponding incremental snapshot, then rebuilds the bank.
 #[allow(clippy::too_many_arguments)]
-pub fn bank_from_latest_snapshot_archives(
+pub fn bank_from_latest_snapshot_archives<'a>(
     bank_snapshots_dir: impl AsRef<Path>,
     full_snapshot_archives_dir: impl AsRef<Path>,
     incremental_snapshot_archives_dir: impl AsRef<Path>,
-    account_paths: &[PathBuf],
-    genesis_config: &GenesisConfig,
-    runtime_config: &RuntimeConfig,
+    account_paths: &'a [PathBuf],
+    genesis_config: &'a GenesisConfig,
+    runtime_config: &'a RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     accounts_db_skip_shrink: bool,
@@ -284,7 +284,7 @@ pub fn bank_from_latest_snapshot_archives(
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
 ) -> snapshot_utils::Result<(
-    Bank,
+    Bank<'a>,
     FullSnapshotArchiveInfo,
     Option<IncrementalSnapshotArchiveInfo>,
 )> {
@@ -324,18 +324,18 @@ pub fn bank_from_latest_snapshot_archives(
 
 /// Build bank from a snapshot (a snapshot directory, not a snapshot archive)
 #[allow(clippy::too_many_arguments)]
-pub fn bank_from_snapshot_dir(
-    account_paths: &[PathBuf],
-    bank_snapshot: &BankSnapshotInfo,
-    genesis_config: &GenesisConfig,
-    runtime_config: &RuntimeConfig,
+pub fn bank_from_snapshot_dir<'a>(
+    account_paths: &'a [PathBuf],
+    bank_snapshot: &'a BankSnapshotInfo,
+    genesis_config: &'a GenesisConfig,
+    runtime_config: &'a RuntimeConfig,
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<Bank> {
+) -> snapshot_utils::Result<Bank<'a>> {
     info!(
         "Loading bank from snapshot dir: {}",
         bank_snapshot.snapshot_dir.display()
@@ -422,18 +422,18 @@ pub fn bank_from_snapshot_dir(
 
 /// follow the prototype of fn bank_from_latest_snapshot_archives, implement the from_dir case
 #[allow(clippy::too_many_arguments)]
-pub fn bank_from_latest_snapshot_dir(
+pub fn bank_from_latest_snapshot_dir<'a>(
     bank_snapshots_dir: impl AsRef<Path>,
-    genesis_config: &GenesisConfig,
-    runtime_config: &RuntimeConfig,
-    account_paths: &[PathBuf],
+    genesis_config: &'a GenesisConfig,
+    runtime_config: &'a RuntimeConfig,
+    account_paths: &'a [PathBuf],
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
     accounts_db_config: AccountsDbConfig,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<Bank> {
+) -> snapshot_utils::Result<Bank<'a>> {
     let bank_snapshot = get_highest_bank_snapshot(&bank_snapshots_dir).ok_or_else(|| {
         SnapshotError::NoSnapshotSlotDir(bank_snapshots_dir.as_ref().to_path_buf())
     })?;

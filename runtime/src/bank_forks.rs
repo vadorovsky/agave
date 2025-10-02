@@ -46,12 +46,12 @@ impl ReadOnlyAtomicSlot {
 
 /// Convenience type since often root/working banks are fetched together.
 #[derive(Clone)]
-pub struct SharableBanks {
-    root_bank: Arc<ArcSwap<Bank>>,
-    working_bank: Arc<ArcSwap<Bank>>,
+pub struct SharableBanks<'a> {
+    root_bank: Arc<ArcSwap<Bank<'a>>>,
+    working_bank: Arc<ArcSwap<Bank<'a>>>,
 }
 
-impl SharableBanks {
+impl SharableBanks<'_> {
     pub fn root(&self) -> Arc<Bank> {
         self.root_bank.load_full()
     }
@@ -68,9 +68,9 @@ impl SharableBanks {
     }
 }
 
-pub struct BankPair {
-    pub root_bank: Arc<Bank>,
-    pub working_bank: Arc<Bank>,
+pub struct BankPair<'a> {
+    pub root_bank: Arc<Bank<'a>>,
+    pub working_bank: Arc<Bank<'a>>,
 }
 
 #[derive(Error, Debug)]
@@ -95,26 +95,26 @@ struct SetRootTimings {
     prune_remove_ms: i64,
 }
 
-pub struct BankForks {
-    banks: HashMap<Slot, BankWithScheduler>,
+pub struct BankForks<'a> {
+    banks: HashMap<Slot, BankWithScheduler<'a>>,
     descendants: HashMap<Slot, HashSet<Slot>>,
     root: Arc<AtomicSlot>,
     working_slot: Slot,
-    sharable_banks: SharableBanks,
+    sharable_banks: SharableBanks<'a>,
     in_vote_only_mode: Arc<AtomicBool>,
     highest_slot_at_startup: Slot,
     scheduler_pool: Option<InstalledSchedulerPoolArc>,
     dumped_slot_subscribers: Vec<DumpedSlotSubscription>,
 }
 
-impl Index<u64> for BankForks {
-    type Output = Arc<Bank>;
+impl<'a> Index<u64> for BankForks<'a> {
+    type Output = Arc<Bank<'a>>;
     fn index(&self, bank_slot: Slot) -> &Self::Output {
         &self.banks[&bank_slot]
     }
 }
 
-impl BankForks {
+impl BankForks<'_> {
     pub fn new_rw_arc(root_bank: Bank) -> Arc<RwLock<Self>> {
         let root_bank = Arc::new(root_bank);
         let root_slot = root_bank.slot();
@@ -288,11 +288,11 @@ impl BankForks {
         bank
     }
 
-    fn install_scheduler_into_bank(
-        scheduler_pool: &InstalledSchedulerPoolArc,
+    fn install_scheduler_into_bank<'a>(
+        scheduler_pool: &'a InstalledSchedulerPoolArc,
         mode: SchedulingMode,
         bank: Arc<Bank>,
-    ) -> BankWithScheduler {
+    ) -> BankWithScheduler<'a> {
         let context = SchedulingContext::new_with_mode(mode, bank.clone());
         let scheduler = scheduler_pool.take_scheduler(context);
         let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
@@ -676,7 +676,7 @@ impl BankForks {
     }
 }
 
-impl ForkGraph for BankForks {
+impl ForkGraph for BankForks<'_> {
     fn relationship(&self, a: Slot, b: Slot) -> BlockRelation {
         let known_slot_range = self.root()..=self.highest_slot();
         if known_slot_range.contains(&a) && known_slot_range.contains(&b) {
@@ -703,7 +703,7 @@ impl ForkGraph for BankForks {
     }
 }
 
-impl Drop for BankForks {
+impl Drop for BankForks<'_> {
     fn drop(&mut self) {
         info!("BankForks::drop(): started...");
         self.banks.clear();

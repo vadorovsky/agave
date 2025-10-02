@@ -23,15 +23,15 @@ use {
 // Used to notify bank hash cache that slots have been dumped by replay
 pub type DumpedSlotSubscription = Arc<Mutex<bool>>;
 
-pub struct BankHashCache {
+pub struct BankHashCache<'a> {
     hashes: BTreeMap<Slot, Hash>,
-    bank_forks: Arc<RwLock<BankForks>>,
-    sharable_banks: SharableBanks,
+    bank_forks: Arc<RwLock<BankForks<'a>>>,
+    sharable_banks: SharableBanks<'a>,
     last_root: Slot,
     dumped_slot_subscription: DumpedSlotSubscription,
 }
 
-impl BankHashCache {
+impl BankHashCache<'_> {
     pub fn new(bank_forks: Arc<RwLock<BankForks>>) -> Self {
         let sharable_banks = bank_forks.read().unwrap().sharable_banks();
         let dumped_slot_subscription = DumpedSlotSubscription::default();

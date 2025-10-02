@@ -38,7 +38,7 @@ fn checked_sub<T: CheckedSub>(a: T, b: T) -> Result<T, CoreBpfMigrationError> {
         .ok_or(CoreBpfMigrationError::ArithmeticOverflow)
 }
 
-impl Bank {
+impl Bank<'_> {
     /// Create an `AccountSharedData` with data initialized to
     /// `UpgradeableLoaderState::Program` populated with the target's new data
     /// account address.

@@ -25,13 +25,13 @@ struct SnapshotGenerationIntervals {
     incremental_snapshot_interval: SnapshotInterval,
 }
 
-pub struct SnapshotController {
-    abs_request_sender: SnapshotRequestSender,
+pub struct SnapshotController<'a> {
+    abs_request_sender: SnapshotRequestSender<'a>,
     snapshot_config: SnapshotConfig,
     latest_abs_request_slot: AtomicU64,
 }
 
-impl SnapshotController {
+impl SnapshotController<'_> {
     pub fn new(
         abs_request_sender: SnapshotRequestSender,
         snapshot_config: SnapshotConfig,

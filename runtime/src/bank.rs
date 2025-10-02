@@ -269,17 +269,17 @@ impl From<FeeDetails> for CollectorFeeDetails {
 }
 
 #[derive(Debug)]
-pub struct BankRc {
+pub struct BankRc<'a> {
     /// where all the Accounts are stored
     pub accounts: Arc<Accounts>,
 
     /// Previous checkpoint of this bank
-    pub(crate) parent: RwLock<Option<Arc<Bank>>>,
+    pub(crate) parent: RwLock<Option<Arc<Bank<'a>>>>,
 
     pub(crate) bank_id_generator: Arc<AtomicU64>,
 }
 
-impl BankRc {
+impl BankRc<'_> {
     pub(crate) fn new(accounts: Accounts) -> Self {
         Self {
             accounts: Arc::new(accounts),
@@ -700,9 +700,9 @@ struct HashOverride {
 }
 
 /// Manager for the state of all accounts and programs after processing its entries.
-pub struct Bank {
+pub struct Bank<'a> {
     /// References to accounts, parent and signature status
-    pub rc: BankRc,
+    pub rc: BankRc<'a>,
 
     /// A cache of signature statuses
     pub status_cache: Arc<RwLock<BankStatusCache>>,
@@ -800,7 +800,7 @@ pub struct Bank {
     inflation: Arc<RwLock<Inflation>>,
 
     /// cache of vote_account and stake_account state for this fork
-    stakes_cache: StakesCache,
+    stakes_cache: StakesCache<'a>,
 
     /// staked nodes on epoch boundaries, saved off when a bank.slot() is at
     ///   a leader schedule calculation boundary
@@ -847,7 +847,7 @@ pub struct Bank {
 
     epoch_reward_status: EpochRewardStatus,
 
-    transaction_processor: TransactionBatchProcessor<BankForks>,
+    transaction_processor: TransactionBatchProcessor<BankForks<'a>>,
 
     check_program_modification_slot: bool,
 
@@ -1011,7 +1011,7 @@ impl AtomicBankHashStats {
     }
 }
 
-impl Bank {
+impl<'a> Bank<'a> {
     fn default_with_accounts(accounts: Accounts) -> Self {
         let mut bank = Self {
             rc: BankRc::new(accounts),
@@ -3856,7 +3856,7 @@ impl Bank {
     }
 
     /// Compute all the parents of the bank including this bank itself
-    pub fn parents_inclusive(self: Arc<Self>) -> Vec<Arc<Bank>> {
+    pub fn parents_inclusive<'a>(self: Arc<Self>) -> Vec<Arc<Bank<'a>>> {
         let mut parents = self.parents();
         parents.insert(0, self);
         parents
@@ -5632,7 +5632,7 @@ enum StoreAccountsCaller<'a> {
     OutOfBand,
 }
 
-impl InvokeContextCallback for Bank {
+impl InvokeContextCallback for Bank<'_> {
     fn get_epoch_stake(&self) -> u64 {
         self.get_current_epoch_total_stake()
     }
@@ -5666,7 +5666,7 @@ impl InvokeContextCallback for Bank {
     }
 }
 
-impl TransactionProcessingCallback for Bank {
+impl TransactionProcessingCallback for Bank<'_> {
     fn get_account_shared_data(&self, pubkey: &Pubkey) -> Option<(AccountSharedData, Slot)> {
         self.rc
             .accounts
@@ -5679,7 +5679,7 @@ impl TransactionProcessingCallback for Bank {
     }
 }
 
-impl fmt::Debug for Bank {
+impl fmt::Debug for Bank<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Bank")
             .field("slot", &self.slot)
@@ -5959,7 +5959,7 @@ fn calculate_data_size_delta(old_data_size: usize, new_data_size: usize) -> i64 
     new_data_size.saturating_sub(old_data_size)
 }
 
-impl Drop for Bank {
+impl Drop for Bank<'_> {
     fn drop(&mut self) {
         if let Some(drop_callback) = self.drop_callback.read().unwrap().0.as_ref() {
             drop_callback.callback(self);

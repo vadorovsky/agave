@@ -36,7 +36,7 @@ impl FeeDistribution {
     }
 }
 
-impl Bank {
+impl Bank<'_> {
     // Distribute collected transaction fees for this slot to collector_id (= current leader).
     //
     // Each validator is incentivized to process more transactions to earn more transaction fees.

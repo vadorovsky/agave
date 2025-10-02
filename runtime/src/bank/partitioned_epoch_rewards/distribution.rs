@@ -39,7 +39,7 @@ struct DistributionResults {
     updated_stake_rewards: StakeRewards,
 }
 
-impl Bank {
+impl Bank<'_> {
     /// Process reward distribution for the block if it is inside reward interval.
     pub(in crate::bank) fn distribute_partitioned_epoch_rewards(&mut self) {
         let EpochRewardStatus::Active(status) = &self.epoch_reward_status else {

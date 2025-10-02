@@ -29,18 +29,18 @@ mod transaction {
 #[cfg(feature = "dev-context-only-utils")]
 use {crate::bank_forks::BankForks, solana_clock as clock, std::sync::RwLock};
 
-pub struct BankClient {
-    bank: Arc<Bank>,
+pub struct BankClient<'a> {
+    bank: Arc<Bank<'a>>,
     transaction_sender: Sender<VersionedTransaction>,
 }
 
-impl Client for BankClient {
+impl Client for BankClient<'_> {
     fn tpu_addr(&self) -> String {
         "Local BankClient".to_string()
     }
 }
 
-impl AsyncClient for BankClient {
+impl AsyncClient for BankClient<'_> {
     fn async_send_versioned_transaction(
         &self,
         transaction: VersionedTransaction,
@@ -52,7 +52,7 @@ impl AsyncClient for BankClient {
     }
 }
 
-impl SyncClient for BankClient {
+impl SyncClient for BankClient<'_> {
     fn send_and_confirm_message<T: Signers + ?Sized>(
         &self,
         keypairs: &T,
@@ -243,7 +243,7 @@ impl SyncClient for BankClient {
     }
 }
 
-impl BankClient {
+impl BankClient<'_> {
     fn run(bank: &Bank, transaction_receiver: Receiver<VersionedTransaction>) {
         while let Ok(tx) = transaction_receiver.recv() {
             let mut transactions = vec![tx];

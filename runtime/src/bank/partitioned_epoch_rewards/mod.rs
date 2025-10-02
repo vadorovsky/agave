@@ -278,7 +278,7 @@ impl KeyedRewardsAndNumPartitions {
     }
 }
 
-impl Bank {
+impl Bank<'_> {
     pub fn get_rewards_and_num_partitions(&self) -> KeyedRewardsAndNumPartitions {
         let keyed_rewards = self.rewards.read().unwrap().clone();
         let epoch_rewards_sysvar = self.get_epoch_rewards_sysvar();

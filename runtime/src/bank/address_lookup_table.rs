@@ -21,7 +21,7 @@ fn into_address_loader_error(err: AddressLookupError) -> AddressLoaderError {
     }
 }
 
-impl AddressLoader for &Bank {
+impl AddressLoader for &Bank<'_> {
     fn load_addresses(
         self,
         address_table_lookups: &[MessageAddressTableLookup],
@@ -35,7 +35,7 @@ impl AddressLoader for &Bank {
     }
 }
 
-impl Bank {
+impl Bank<'_> {
     /// Load addresses from an iterator of `SVMMessageAddressTableLookup`,
     /// additionally returning the minimum deactivation slot across all referenced ALTs
     pub fn load_addresses_from_ref<'a>(

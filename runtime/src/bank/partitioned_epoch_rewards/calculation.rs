@@ -93,7 +93,7 @@ impl RewardsAccumulator {
     }
 }
 
-impl Bank {
+impl Bank<'_> {
     /// Begin the process of calculating and distributing rewards.
     /// This process can take multiple slots.
     pub(in crate::bank) fn begin_partitioned_rewards(
