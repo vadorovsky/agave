@@ -17,7 +17,7 @@ use {
     std::{
         collections::HashMap,
         ops::Add,
-        sync::{Arc, RwLock, RwLockReadGuard},
+        sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
     },
     thiserror::Error,
 };
@@ -62,6 +62,10 @@ impl StakesCache {
 
     pub(crate) fn stakes(&self) -> RwLockReadGuard<Stakes<StakeAccount>> {
         self.0.read().unwrap()
+    }
+
+    pub(crate) fn stakes_mut(&self) -> RwLockWriteGuard<Stakes<StakeAccount>> {
+        self.0.write().unwrap()
     }
 
     pub(crate) fn check_and_store(
@@ -137,15 +141,15 @@ impl StakesCache {
         }
     }
 
-    pub(crate) fn activate_epoch(
-        &self,
-        next_epoch: Epoch,
-        thread_pool: &ThreadPool,
-        new_rate_activation_epoch: Option<Epoch>,
-    ) {
-        let mut stakes = self.0.write().unwrap();
-        stakes.activate_epoch(next_epoch, thread_pool, new_rate_activation_epoch)
-    }
+    // pub(crate) fn activate_epoch(
+    //     &self,
+    //     next_epoch: Epoch,
+    //     thread_pool: &ThreadPool,
+    //     new_rate_activation_epoch: Option<Epoch>,
+    // ) {
+    //     let mut stakes = self.0.write().unwrap();
+    //     stakes.activate_epoch(next_epoch, thread_pool, new_rate_activation_epoch)
+    // }
 }
 
 /// The generic type T is either Delegation or StakeAccount.
@@ -277,12 +281,12 @@ impl Stakes<StakeAccount> {
         &self.stake_history
     }
 
-    fn activate_epoch(
+    pub(crate) fn activate_epoch(
         &mut self,
         next_epoch: Epoch,
         thread_pool: &ThreadPool,
         new_rate_activation_epoch: Option<Epoch>,
-    ) {
+    ) -> StakeHistory {
         let stake_delegations: Vec<_> = self.stake_delegations.values().collect();
         // Wrap up the prev epoch by adding new stake history entry for the
         // prev epoch.
@@ -299,7 +303,8 @@ impl Stakes<StakeAccount> {
                 })
                 .reduce(StakeActivationStatus::default, Add::add)
         });
-        self.stake_history.add(self.epoch, stake_history_entry);
+        let mut stake_history = self.stake_history.clone();
+        stake_history.add(self.epoch, stake_history_entry);
         self.epoch = next_epoch;
         // Refresh the stake distribution of vote accounts for the next epoch,
         // using new stake history.
@@ -311,6 +316,12 @@ impl Stakes<StakeAccount> {
             &self.stake_history,
             new_rate_activation_epoch,
         );
+
+        stake_history
+    }
+
+    pub(crate) fn update_epoch(&mut self, stake_history: StakeHistory) {
+        self.stake_history = stake_history
     }
 
     /// Sum the stakes that point to the given voter_pubkey
@@ -814,9 +825,10 @@ pub(crate) mod tests {
             );
         }
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        stakes_cache.activate_epoch(3, &thread_pool, None);
+        // stakes_cache.activate_epoch(3, &thread_pool, None);
         {
-            let stakes = stakes_cache.stakes();
+            let mut stakes = stakes_cache.stakes_mut();
+            let _stake_history = stakes.activate_epoch(3, &thread_pool, None);
             let vote_accounts = stakes.vote_accounts();
             assert_eq!(
                 vote_accounts.get_delegated_stake(&vote_pubkey),

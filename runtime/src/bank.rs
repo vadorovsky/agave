@@ -1543,14 +1543,18 @@ impl Bank {
             thread_pool.install(|| { self.compute_and_apply_new_feature_activations() })
         );
 
+        let mut stakes = self.stakes_cache.stakes_mut();
+
         // Add new entry to stakes.stake_history, set appropriate epoch and
         // update vote accounts with warmed up stakes before saving a
         // snapshot of stakes in epoch stakes
-        let (_, activate_epoch_time_us) = measure_us!(self.stakes_cache.activate_epoch(
+        let (stake_history, activate_epoch_time_us) = measure_us!(stakes.activate_epoch(
             epoch,
             &thread_pool,
             self.new_warmup_cooldown_rate_epoch()
         ));
+
+        drop(stakes);
 
         // Save a snapshot of stakes for use in consensus and stake weighted networking
         let leader_schedule_epoch = self.epoch_schedule.get_leader_schedule_epoch(slot);
@@ -1563,11 +1567,15 @@ impl Bank {
             .begin_partitioned_rewards(
                 reward_calc_tracer,
                 &thread_pool,
+                &stake_history,
                 parent_epoch,
                 parent_slot,
                 parent_height,
                 &mut rewards_metrics,
             ));
+
+        let mut stakes = self.stakes_cache.stakes_mut();
+        stakes.update_epoch(stake_history);
 
         report_new_epoch_metrics(
             epoch,

@@ -100,6 +100,7 @@ impl Bank {
         &mut self,
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
         thread_pool: &ThreadPool,
+        stake_history: &StakeHistory,
         parent_epoch: Epoch,
         parent_slot: Slot,
         parent_block_height: u64,
@@ -113,6 +114,7 @@ impl Bank {
             parent_epoch,
             reward_calc_tracer,
             thread_pool,
+            stake_history,
             rewards_metrics,
         );
 
@@ -147,6 +149,7 @@ impl Bank {
         prev_epoch: Epoch,
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
         thread_pool: &ThreadPool,
+        stake_history: &StakeHistory,
         metrics: &mut RewardsMetrics,
     ) -> CalculateRewardsAndDistributeVoteRewardsResult {
         // We hold the lock here for the epoch rewards calculation cache to prevent
@@ -177,6 +180,7 @@ impl Bank {
                     prev_epoch,
                     reward_calc_tracer,
                     thread_pool,
+                    stake_history,
                     metrics,
                 ))
             })
@@ -276,6 +280,7 @@ impl Bank {
         prev_epoch: Epoch,
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
         thread_pool: &ThreadPool,
+        stake_history: &StakeHistory,
         metrics: &mut RewardsMetrics,
     ) -> PartitionedRewardsCalculation {
         let capitalization = self.capitalization();
@@ -296,6 +301,7 @@ impl Bank {
                 validator_rewards,
                 reward_calc_tracer,
                 thread_pool,
+                stake_history,
                 metrics,
             )
             .unwrap_or_default();
@@ -323,24 +329,33 @@ impl Bank {
         rewards: u64,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         thread_pool: &ThreadPool,
+        stake_history: &StakeHistory,
         metrics: &mut RewardsMetrics,
     ) -> Option<CalculateValidatorRewardsResult> {
         let stakes = self.stakes_cache.stakes();
-        let reward_calculate_param = self.get_epoch_reward_calculate_param_info(&stakes);
+        let EpochRewardCalculateParamInfo {
+            stake_delegations,
+            cached_vote_accounts,
+            ..
+        } = self.get_epoch_reward_calculate_param_info(&stakes);
 
         self.calculate_reward_points_partitioned(
-            &reward_calculate_param,
             rewards,
             thread_pool,
+            stake_history,
+            &stake_delegations,
+            cached_vote_accounts,
             metrics,
         )
         .map(|point_value| {
             let (vote_rewards_accounts, stake_reward_calculation) = self
                 .calculate_stake_vote_rewards(
-                    &reward_calculate_param,
                     rewarded_epoch,
                     point_value.clone(),
                     thread_pool,
+                    stake_history,
+                    &stake_delegations,
+                    &cached_vote_accounts,
                     reward_calc_tracer,
                     metrics,
                 );
@@ -447,19 +462,15 @@ impl Bank {
     /// Returns vote rewards, stake rewards, and the sum of all stake rewards in lamports
     fn calculate_stake_vote_rewards(
         &self,
-        reward_calculate_params: &EpochRewardCalculateParamInfo,
         rewarded_epoch: Epoch,
         point_value: PointValue,
         thread_pool: &ThreadPool,
+        stake_history: &StakeHistory,
+        stake_delegations: &[(&Pubkey, &StakeAccount<Delegation>)],
+        cached_vote_accounts: &VoteAccounts,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         metrics: &mut RewardsMetrics,
     ) -> (VoteRewardsAccounts, StakeRewardCalculation) {
-        let EpochRewardCalculateParamInfo {
-            stake_history,
-            stake_delegations,
-            cached_vote_accounts,
-        } = reward_calculate_params;
-
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
@@ -553,17 +564,13 @@ impl Bank {
     /// Returns reward lamports and points for the epoch or none if points == 0.
     fn calculate_reward_points_partitioned(
         &self,
-        reward_calculate_params: &EpochRewardCalculateParamInfo,
         rewards: u64,
         thread_pool: &ThreadPool,
+        stake_history: &StakeHistory,
+        stake_delegations: &[(&Pubkey, &StakeAccount<Delegation>)],
+        cached_vote_accounts: &VoteAccounts,
         metrics: &RewardsMetrics,
     ) -> Option<PointValue> {
-        let EpochRewardCalculateParamInfo {
-            stake_history,
-            stake_delegations,
-            cached_vote_accounts,
-        } = reward_calculate_params;
-
         let solana_vote_program: Pubkey = solana_vote_program::id();
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let (points, measure_us) = measure_us!(thread_pool.install(|| {
@@ -637,7 +644,11 @@ impl Bank {
         };
 
         let stakes = self.stakes_cache.stakes();
-        let reward_calculate_param = self.get_epoch_reward_calculate_param_info(&stakes);
+        let EpochRewardCalculateParamInfo {
+            stake_history,
+            stake_delegations,
+            cached_vote_accounts,
+        } = self.get_epoch_reward_calculate_param_info(&stakes);
 
         // On recalculation, only the `StakeRewardCalculation::stake_rewards`
         // field is relevant. It is assumed that vote-account rewards have
@@ -645,10 +656,12 @@ impl Bank {
         // `StakeRewardCalculation::total_rewards` only reflects rewards that
         // have not yet been distributed.
         let (_, StakeRewardCalculation { stake_rewards, .. }) = self.calculate_stake_vote_rewards(
-            &reward_calculate_param,
             rewarded_epoch,
             point_value,
             thread_pool,
+            &stake_history,
+            &stake_delegations,
+            &cached_vote_accounts,
             null_tracer(),
             &mut RewardsMetrics::default(), // This is required, but not reporting anything at the moment
         );
@@ -793,6 +806,9 @@ mod tests {
 
         // Calculate rewards
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let stakes = bank.stakes_cache.stakes();
+        let EpochRewardCalculateParamInfo { stake_history, .. } =
+            bank.get_epoch_reward_calculate_param_info(&stakes);
         let mut rewards_metrics = RewardsMetrics::default();
         let expected_rewards = 100_000_000_000;
 
@@ -801,6 +817,7 @@ mod tests {
             expected_rewards,
             null_tracer(),
             &thread_pool,
+            &stake_history,
             &mut rewards_metrics,
         );
 
@@ -842,12 +859,18 @@ mod tests {
         let expected_rewards = 100_000_000_000;
 
         let stakes: RwLockReadGuard<Stakes<StakeAccount<Delegation>>> = bank.stakes_cache.stakes();
-        let reward_calculate_param = bank.get_epoch_reward_calculate_param_info(&stakes);
+        let EpochRewardCalculateParamInfo {
+            stake_history,
+            stake_delegations,
+            cached_vote_accounts,
+        } = bank.get_epoch_reward_calculate_param_info(&stakes);
 
         let point_value = bank.calculate_reward_points_partitioned(
-            &reward_calculate_param,
             expected_rewards,
             &thread_pool,
+            &stake_history,
+            &stake_delegations,
+            &cached_vote_accounts,
             &rewards_metrics,
         );
 
@@ -868,12 +891,18 @@ mod tests {
         let rewards_metrics: RewardsMetrics = RewardsMetrics::default();
         let expected_rewards = 100_000_000_000;
         let stakes: RwLockReadGuard<Stakes<StakeAccount<Delegation>>> = bank.stakes_cache.stakes();
-        let reward_calculate_param = bank.get_epoch_reward_calculate_param_info(&stakes);
+        let EpochRewardCalculateParamInfo {
+            stake_history,
+            stake_delegations,
+            cached_vote_accounts,
+        } = bank.get_epoch_reward_calculate_param_info(&stakes);
 
         let point_value = bank.calculate_reward_points_partitioned(
-            &reward_calculate_param,
             expected_rewards,
             &thread_pool,
+            &stake_history,
+            &stake_delegations,
+            &cached_vote_accounts,
             &rewards_metrics,
         );
 
@@ -909,12 +938,18 @@ mod tests {
         let reward_calc_tracer = Some(tracer);
         let rewarded_epoch = bank.epoch();
         let stakes: RwLockReadGuard<Stakes<StakeAccount<Delegation>>> = bank.stakes_cache.stakes();
-        let reward_calculate_param = bank.get_epoch_reward_calculate_param_info(&stakes);
+        let EpochRewardCalculateParamInfo {
+            stake_history,
+            stake_delegations,
+            cached_vote_accounts,
+        } = bank.get_epoch_reward_calculate_param_info(&stakes);
         let (vote_rewards_accounts, stake_reward_calculation) = bank.calculate_stake_vote_rewards(
-            &reward_calculate_param,
             rewarded_epoch,
             point_value,
             &thread_pool,
+            &stake_history,
+            &stake_delegations,
+            &cached_vote_accounts,
             reward_calc_tracer,
             &mut rewards_metrics,
         );
@@ -995,6 +1030,9 @@ mod tests {
         let rewarded_epoch = bank.epoch();
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let stakes = bank.stakes_cache.stakes();
+        let EpochRewardCalculateParamInfo { stake_history, .. } =
+            bank.get_epoch_reward_calculate_param_info(&stakes);
         let mut rewards_metrics = RewardsMetrics::default();
         let PartitionedRewardsCalculation {
             stake_rewards:
@@ -1007,8 +1045,10 @@ mod tests {
             rewarded_epoch,
             null_tracer(),
             &thread_pool,
+            &stake_history,
             &mut rewards_metrics,
         );
+        drop(stakes);
 
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
         let (recalculated_rewards, recalculated_partition_indices) =
@@ -1090,6 +1130,9 @@ mod tests {
         let rewarded_epoch = bank.epoch();
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let stakes = bank.stakes_cache.stakes();
+        let EpochRewardCalculateParamInfo { stake_history, .. } =
+            bank.get_epoch_reward_calculate_param_info(&stakes);
         let mut rewards_metrics = RewardsMetrics::default();
         let PartitionedRewardsCalculation {
             stake_rewards:
@@ -1102,8 +1145,10 @@ mod tests {
             rewarded_epoch,
             null_tracer(),
             &thread_pool,
+            &stake_history,
             &mut rewards_metrics,
         );
+        drop(stakes);
 
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
         let expected_partition_indices = hash_rewards_into_partitions(
@@ -1155,6 +1200,9 @@ mod tests {
         let expected_starting_block_height = bank.block_height() + 1;
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let stakes = bank.stakes_cache.stakes();
+        let EpochRewardCalculateParamInfo { stake_history, .. } =
+            bank.get_epoch_reward_calculate_param_info(&stakes);
         let mut rewards_metrics = RewardsMetrics::default();
         let PartitionedRewardsCalculation {
             stake_rewards:
@@ -1168,8 +1216,10 @@ mod tests {
             rewarded_epoch,
             null_tracer(),
             &thread_pool,
+            &stake_history,
             &mut rewards_metrics,
         );
+        drop(stakes);
 
         bank.recalculate_partitioned_rewards_if_active(|| &thread_pool);
         let EpochRewardStatus::Active(EpochRewardPhase::Distribution(
