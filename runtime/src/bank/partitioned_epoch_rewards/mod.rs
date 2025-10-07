@@ -144,7 +144,7 @@ pub(crate) enum EpochRewardPhase {
     Distribution(StartBlockHeightAndPartitionedRewards),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(super) struct VoteRewardsAccounts {
     /// accounts with rewards to be stored
     pub(super) accounts_with_rewards: Vec<(Pubkey, RewardInfo, AccountSharedData)>,
@@ -199,7 +199,7 @@ impl<'a> StorableAccounts<'a> for VoteRewardsAccountsStorable<'a> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 /// result of calculating the stake rewards at end of epoch
 pub(super) struct StakeRewardCalculation {
     /// each individual stake account to reward
@@ -238,7 +238,7 @@ pub(super) struct EpochRewardCalculateParamInfo<'a> {
 /// Hold all results from calculating the rewards for partitioned distribution.
 /// This struct exists so we can have a function which does all the calculation with no
 /// side effects.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct PartitionedRewardsCalculation {
     pub(super) vote_account_rewards: VoteRewardsAccounts,
     pub(super) stake_rewards: StakeRewardCalculation,
