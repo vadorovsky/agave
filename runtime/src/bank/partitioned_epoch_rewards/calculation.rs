@@ -101,6 +101,52 @@ impl RewardsAccumulator {
 }
 
 impl Bank {
+    fn check_epoch_rewards_cache(&self) -> Option<Arc<PartitionedRewardsCalculation>> {
+        let epoch_rewards_calculation_cache = self.epoch_rewards_calculation_cache.lock().unwrap();
+        epoch_rewards_calculation_cache
+            .get(&self.parent_hash)
+            .cloned()
+    }
+
+    fn cache_epoch_rewards(&self, rewards_calculation: &PartitionedRewardsCalculation) {
+        // We hold the lock here for the epoch rewards calculation cache to prevent
+        // rewards computation across multiple forks simultaneously. This aligns with
+        // how banks are currently created- all banks are created sequentially.
+        // As such, this lock does not actually introduce contention because bank
+        // creation (and therefore reward calculation) is always done sequentially.
+        //
+        // However, if we plan to support creating banks in parallel in the future, this logic
+        // would need to change to allow rewards computation on multiple forks concurrently.
+        // That said, there's still a compelling reason to keep this lock even in a parallel
+        // bank creation model: we want to avoid calculating rewards multiple times for the same
+        // parent bank hash. This lock ensures that.
+        //
+        // Creating bank for multiple forks in parallel would also introduce contention for compute resources,
+        // potentially slowing down the performance of both forks. This, in turn, could delay
+        // vote propagation and consensus for the leading fork—the one most likely to become rooted.
+        //
+        // Therefore, it seems beneficial to continue processing forks sequentially at epoch
+        // boundaries: acquire the lock for the first fork, compute rewards, and let other forks
+        // wait until the computation is complete.
+        let mut epoch_rewards_calculation_cache =
+            self.epoch_rewards_calculation_cache.lock().unwrap();
+        epoch_rewards_calculation_cache
+            .entry(self.parent_hash)
+            .or_insert_with(|| Arc::new(rewards_calculation.clone()));
+    }
+
+    fn extract_rewards_from_cache(
+        &self,
+        cached: &PartitionedRewardsCalculation,
+    ) -> CalculateRewardsAndDistributeVoteRewardsResult {
+        CalculateRewardsAndDistributeVoteRewardsResult {
+            distributed_rewards: cached.vote_account_rewards.total_vote_rewards_lamports,
+            point_value: cached.point_value.clone(),
+            stake_rewards: Arc::clone(&cached.stake_rewards.stake_rewards),
+            rewards_calculation: cached.clone(),
+        }
+    }
+
     // Calculate rewards from previous epoch and distribute vote rewards
     pub(in crate::bank) fn calculate_rewards_and_distribute_vote_rewards(
         &self,
@@ -112,6 +158,13 @@ impl Bank {
         thread_pool: &ThreadPool,
         metrics: &mut RewardsMetrics,
     ) -> CalculateRewardsAndDistributeVoteRewardsResult {
+        // Check cache before doing expensive work
+        if let Some(cached) = self.check_epoch_rewards_cache() {
+            // Cache hit - return immediately without computing
+            return self.extract_rewards_from_cache(&cached);
+        }
+
+        // Cache miss - proceed with computation
         let stake_delegations = self.filter_stake_delegations(stake_delegations);
         let rewards_calculation = self.calculate_rewards_for_partitioning(
             stake_history,
@@ -133,6 +186,9 @@ impl Bank {
         } = &rewards_calculation;
 
         let total_vote_rewards = vote_account_rewards.total_vote_rewards_lamports;
+
+        // Cache the result for other forks
+        self.cache_epoch_rewards(&rewards_calculation);
 
         let StakeRewardCalculation {
             stake_rewards,
@@ -186,7 +242,7 @@ impl Bank {
             distributed_rewards: total_vote_rewards,
             point_value: point_value.clone(),
             stake_rewards: Arc::clone(stake_rewards),
-            rewards_calculation,
+            rewards_calculation: rewards_calculation,
         }
     }
 
@@ -211,32 +267,6 @@ impl Bank {
         } = &rewards_calculation;
         self.store_vote_accounts_partitioned(vote_account_rewards, reward_metrics);
         self.update_vote_rewards(vote_account_rewards);
-
-        // We hold the lock here for the epoch rewards calculation cache to prevent
-        // rewards computation across multiple forks simultaneously. This aligns with
-        // how banks are currently created- all banks are created sequentially.
-        // As such, this lock does not actually introduce contention because bank
-        // creation (and therefore reward calculation) is always done sequentially.
-        //
-        // However, if we plan to support creating banks in parallel in the future, this logic
-        // would need to change to allow rewards computation on multiple forks concurrently.
-        // That said, there's still a compelling reason to keep this lock even in a parallel
-        // bank creation model: we want to avoid calculating rewards multiple times for the same
-        // parent bank hash. This lock ensures that.
-        //
-        // Creating bank for multiple forks in parallel would also introduce contention for compute resources,
-        // potentially slowing down the performance of both forks. This, in turn, could delay
-        // vote propagation and consensus for the leading fork—the one most likely to become rooted.
-        //
-        // Therefore, it seems beneficial to continue processing forks sequentially at epoch
-        // boundaries: acquire the lock for the first fork, compute rewards, and let other forks
-        // wait until the computation is complete.
-        let mut epoch_rewards_calculation_cache =
-            self.epoch_rewards_calculation_cache.lock().unwrap();
-        epoch_rewards_calculation_cache
-            .entry(self.parent_hash)
-            .or_insert_with(|| Arc::new(rewards_calculation));
-        drop(epoch_rewards_calculation_cache);
 
         let slot = self.slot();
         let distribution_starting_block_height =
@@ -716,6 +746,7 @@ mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_reward_info::RewardType,
         solana_stake_interface::state::{Delegation, StakeStateV2},
+        solana_stake_program::stake_state,
         solana_vote_interface::state::VoteStateV4,
         solana_vote_program::vote_state,
         std::sync::{Arc, RwLockReadGuard},
@@ -1482,5 +1513,116 @@ mod tests {
         let vote_reward_c = accumulator.vote_rewards.get(&vote_pubkey_c).unwrap();
         assert_eq!(vote_reward_c.commission, 10);
         assert_eq!(vote_reward_c.vote_rewards, 50);
+    }
+
+    #[test]
+    fn test_epoch_rewards_cache_multiple_forks() {
+        solana_logger::setup();
+
+        let (mut genesis_config, _mint_keypair) =
+            create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+
+        // Add many stake accounts
+        const NUM_STAKES: usize = 10000;
+
+        for _i in 0..NUM_STAKES {
+            let vote_pubkey = Pubkey::new_unique();
+            let stake_pubkey = Pubkey::new_unique();
+
+            // Create vote account
+            genesis_config.accounts.insert(
+                vote_pubkey,
+                vote_state::create_account(&vote_pubkey, &Pubkey::new_unique(), 0, 100_000_000_000)
+                    .into(),
+            );
+
+            // Create stake account
+            let stake_lamports = 1_000_000_000_000;
+            let stake_account = stake_state::create_account(
+                &stake_pubkey,
+                &vote_pubkey,
+                &vote_state::create_account(
+                    &vote_pubkey,
+                    &Pubkey::new_unique(),
+                    0,
+                    100_000_000_000,
+                ),
+                &genesis_config.rent,
+                stake_lamports,
+            );
+            genesis_config
+                .accounts
+                .insert(stake_pubkey, stake_account.into());
+        }
+
+        let bank = Bank::new_for_tests(&genesis_config);
+
+        // Advance to epoch boundary
+        let slots_per_epoch = bank.epoch_schedule().slots_per_epoch;
+        let bank = Arc::new(bank);
+        let bank = Bank::new_from_parent(bank, &Pubkey::default(), slots_per_epoch);
+
+        let parent_hash = bank.parent_hash;
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let mut metrics = RewardsMetrics::default();
+
+        // First fork: should compute and cache
+        let stakes = bank.stakes_cache.stakes();
+        let stake_delegations: Vec<_> = stakes.stake_delegations().iter().collect();
+        let stake_delegations = bank.filter_stake_delegations(stake_delegations);
+        let stake_history = stakes.history().clone();
+        let vote_accounts = stakes.vote_accounts();
+
+        println!("Testing with {} stake accounts", stake_delegations.len());
+
+        let start = std::time::Instant::now();
+        let result1 = bank.calculate_rewards_and_distribute_vote_rewards(
+            &stake_history,
+            stake_delegations.stake_delegations.clone(),
+            vote_accounts,
+            0, // prev_epoch
+            null_tracer(),
+            &thread_pool,
+            &mut metrics,
+        );
+        let first_duration = start.elapsed();
+
+        // Verify cache was populated
+        let cache = bank.epoch_rewards_calculation_cache.lock().unwrap();
+        assert!(
+            cache.contains_key(&parent_hash),
+            "Cache should be populated after first computation"
+        );
+        drop(cache);
+
+        // Second fork (same parent): should hit cache
+        let start = std::time::Instant::now();
+        let result2 = bank.calculate_rewards_and_distribute_vote_rewards(
+            &stake_history,
+            stake_delegations.stake_delegations,
+            vote_accounts,
+            0, // prev_epoch
+            null_tracer(),
+            &thread_pool,
+            &mut metrics,
+        );
+        let second_duration = start.elapsed();
+
+        // Verify results are identical
+        assert_eq!(result1.distributed_rewards, result2.distributed_rewards);
+        assert_eq!(
+            result1.stake_rewards.rewards.len(),
+            result2.stake_rewards.rewards.len()
+        );
+
+        // Cache hit should be significantly faster (at least 10x)
+        println!("First computation: {:?}", first_duration);
+        println!("Cache hit: {:?}", second_duration);
+        assert!(
+            second_duration < first_duration / 10,
+            "Cache hit should be much faster than computation. First: {:?}, Second: {:?}",
+            first_duration,
+            second_duration
+        );
     }
 }
