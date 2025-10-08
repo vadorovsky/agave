@@ -102,9 +102,10 @@ impl RewardsAccumulator {
 
 impl Bank {
     fn check_epoch_rewards_cache(&self) -> Option<Arc<PartitionedRewardsCalculation>> {
-        let epoch_rewards_calculation_cache = 
-            self.epoch_rewards_calculation_cache.lock().unwrap();
-        epoch_rewards_calculation_cache.get(&self.parent_hash).cloned()
+        let epoch_rewards_calculation_cache = self.epoch_rewards_calculation_cache.lock().unwrap();
+        epoch_rewards_calculation_cache
+            .get(&self.parent_hash)
+            .cloned()
     }
 
     fn cache_epoch_rewards(&self, rewards_calculation: &PartitionedRewardsCalculation) {
@@ -162,7 +163,7 @@ impl Bank {
             // Cache hit - return immediately without computing
             return self.extract_rewards_from_cache(&cached);
         }
-        
+
         // Cache miss - proceed with computation
         let stake_delegations = self.filter_stake_delegations(stake_delegations);
         let rewards_calculation = self.calculate_rewards_for_partitioning(
@@ -1518,7 +1519,8 @@ mod tests {
     fn test_epoch_rewards_cache_multiple_forks() {
         solana_logger::setup();
 
-        let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+        let (mut genesis_config, _mint_keypair) =
+            create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
 
         // Add many stake accounts
         const NUM_STAKES: usize = 10000;
@@ -1526,23 +1528,31 @@ mod tests {
         for _i in 0..NUM_STAKES {
             let vote_pubkey = Pubkey::new_unique();
             let stake_pubkey = Pubkey::new_unique();
-        
+
             // Create vote account
             genesis_config.accounts.insert(
                 vote_pubkey,
-                vote_state::create_account(&vote_pubkey, &Pubkey::new_unique(), 0, 100_000_000_000).into(),
+                vote_state::create_account(&vote_pubkey, &Pubkey::new_unique(), 0, 100_000_000_000)
+                    .into(),
             );
-        
+
             // Create stake account
             let stake_lamports = 1_000_000_000_000;
             let stake_account = stake_state::create_account(
                 &stake_pubkey,
                 &vote_pubkey,
-                &vote_state::create_account(&vote_pubkey, &Pubkey::new_unique(), 0, 100_000_000_000),
+                &vote_state::create_account(
+                    &vote_pubkey,
+                    &Pubkey::new_unique(),
+                    0,
+                    100_000_000_000,
+                ),
                 &genesis_config.rent,
                 stake_lamports,
             );
-            genesis_config.accounts.insert(stake_pubkey, stake_account.into());
+            genesis_config
+                .accounts
+                .insert(stake_pubkey, stake_account.into());
         }
 
         let bank = Bank::new_for_tests(&genesis_config);
@@ -1550,11 +1560,7 @@ mod tests {
         // Advance to epoch boundary
         let slots_per_epoch = bank.epoch_schedule().slots_per_epoch;
         let bank = Arc::new(bank);
-        let bank = Bank::new_from_parent(
-           bank,
-           &Pubkey::default(),
-           slots_per_epoch,
-        );
+        let bank = Bank::new_from_parent(bank, &Pubkey::default(), slots_per_epoch);
 
         let parent_hash = bank.parent_hash;
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
@@ -1571,48 +1577,52 @@ mod tests {
 
         let start = std::time::Instant::now();
         let result1 = bank.calculate_rewards_and_distribute_vote_rewards(
-           &stake_history,
-           stake_delegations.stake_delegations.clone(),
-           vote_accounts,
-           0, // prev_epoch
-           null_tracer(),
-           &thread_pool,
-           &mut metrics,
+            &stake_history,
+            stake_delegations.stake_delegations.clone(),
+            vote_accounts,
+            0, // prev_epoch
+            null_tracer(),
+            &thread_pool,
+            &mut metrics,
         );
         let first_duration = start.elapsed();
 
         // Verify cache was populated
         let cache = bank.epoch_rewards_calculation_cache.lock().unwrap();
-        assert!(cache.contains_key(&parent_hash), "Cache should be populated after first computation");
+        assert!(
+            cache.contains_key(&parent_hash),
+            "Cache should be populated after first computation"
+        );
         drop(cache);
 
         // Second fork (same parent): should hit cache
         let start = std::time::Instant::now();
         let result2 = bank.calculate_rewards_and_distribute_vote_rewards(
-           &stake_history,
-           stake_delegations.stake_delegations,
-           vote_accounts,
-           0, // prev_epoch
-           null_tracer(),
-           &thread_pool,
-           &mut metrics,
+            &stake_history,
+            stake_delegations.stake_delegations,
+            vote_accounts,
+            0, // prev_epoch
+            null_tracer(),
+            &thread_pool,
+            &mut metrics,
         );
         let second_duration = start.elapsed();
 
         // Verify results are identical
         assert_eq!(result1.distributed_rewards, result2.distributed_rewards);
-        assert_eq!(result1.stake_rewards.rewards.len(), result2.stake_rewards.rewards.len());
+        assert_eq!(
+            result1.stake_rewards.rewards.len(),
+            result2.stake_rewards.rewards.len()
+        );
 
         // Cache hit should be significantly faster (at least 10x)
         println!("First computation: {:?}", first_duration);
         println!("Cache hit: {:?}", second_duration);
         assert!(
-           second_duration < first_duration / 10,
-           "Cache hit should be much faster than computation. First: {:?}, Second: {:?}",
-           first_duration,
-           second_duration
+            second_duration < first_duration / 10,
+            "Cache hit should be much faster than computation. First: {:?}, Second: {:?}",
+            first_duration,
+            second_duration
         );
     }
 }
-
-
