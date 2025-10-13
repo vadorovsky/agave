@@ -66,13 +66,12 @@ use {
     },
     ahash::AHashSet,
     dashmap::DashMap,
-    itertools::Either,
     log::*,
     partitioned_epoch_rewards::{
         CalculateRewardsAndDistributeVoteRewardsResult, PartitionedRewardsCalculation,
     },
     rayon::{
-        iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
+        iter::{IntoParallelRefIterator, ParallelIterator},
         ThreadPool, ThreadPoolBuilder,
     },
     serde::{Deserialize, Serialize},
@@ -114,7 +113,6 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{measure::Measure, measure_time, measure_us},
     solana_message::{inner_instruction::InnerInstructions, AccountKeys, SanitizedMessage},
-    solana_native_token::LAMPORTS_PER_SOL,
     solana_packet::PACKET_DATA_SIZE,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{
@@ -1065,47 +1063,6 @@ struct NewEpochBundle {
     update_rewards_with_thread_pool_time_us: u64,
 }
 
-struct FilteredStakeDelegations<'a> {
-    stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
-    min_stake_delegation: Option<u64>,
-}
-
-impl<'a> FilteredStakeDelegations<'a> {
-    fn len(&self) -> usize {
-        self.stake_delegations.len()
-    }
-
-    fn par_iter(
-        &'a self,
-    ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount<Delegation>)>>
-    {
-        match self.min_stake_delegation {
-            Some(ref min_stake_delegation) => Either::Left(
-                self.stake_delegations
-                    .par_iter()
-                    // We yield `None` items instead of filtering them out to
-                    // keep the number of elements predictable. It's better to
-                    // let the callers deal with `None` elements and even store
-                    // them in collections (that are allocated once with the
-                    // size of `FilteredStakeDelegations::len`) rather than
-                    // `collect` yet another time (which would take ~100ms).
-                    .map(|(pubkey, stake_account)| {
-                        if stake_account.delegation().stake >= *min_stake_delegation {
-                            // Dereference `&&` to `&`.
-                            Some((*pubkey, *stake_account))
-                        } else {
-                            None
-                        }
-                    }),
-            ),
-            None => Either::Right(self.stake_delegations.par_iter().map(
-                |(pubkey, stake_account)|
-                        // Dereference `&&` to `&`.
-                        Some((*pubkey, *stake_account)),
-            )),
-        }
-    }
-}
 impl Bank {
     fn default_with_accounts(accounts: Accounts) -> Self {
         let mut bank = Self {
@@ -1653,7 +1610,7 @@ impl Bank {
         thread_pool: &ThreadPool,
     ) -> NewEpochBundle {
         let stakes = self.stakes_cache.stakes();
-        let stake_delegations: Vec<_> = stakes.stake_delegations().iter().collect();
+        let stake_delegations: Vec<_> = stakes.iterable_stake_delegations();
 
         // Compute new stake history and vote accounts.
         let ((stake_history, vote_accounts), activate_epoch_time_us) = measure_us!(stakes
@@ -2388,29 +2345,6 @@ impl Bank {
             prev_epoch_duration_in_years,
             validator_rate,
             foundation_rate,
-        }
-    }
-
-    fn filter_stake_delegations<'a>(
-        &self,
-        stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
-    ) -> FilteredStakeDelegations<'a> {
-        let min_stake_delegation = if self
-            .feature_set
-            .is_active(&feature_set::stake_minimum_delegation_for_rewards::id())
-        {
-            let min_stake_delegation = solana_stake_program::get_minimum_delegation(
-                self.feature_set
-                    .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
-            )
-            .max(LAMPORTS_PER_SOL);
-            Some(min_stake_delegation)
-        } else {
-            None
-        };
-        FilteredStakeDelegations {
-            stake_delegations,
-            min_stake_delegation,
         }
     }
 

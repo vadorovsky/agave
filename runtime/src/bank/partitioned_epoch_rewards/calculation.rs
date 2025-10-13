@@ -2,14 +2,14 @@ use {
     super::{
         epoch_rewards_hasher::hash_rewards_into_partitions, Bank,
         CalculateRewardsAndDistributeVoteRewardsResult, CalculateValidatorRewardsResult,
-        EpochRewardCalculateParamInfo, PartitionedRewardsCalculation, PartitionedStakeReward,
-        PartitionedStakeRewards, StakeRewardCalculation, VoteRewardsAccounts,
-        VoteRewardsAccountsStorable, REWARD_CALCULATION_NUM_BLOCKS,
+        EpochRewardCalculateParamInfo, FilteredStakeDelegations, PartitionedRewardsCalculation,
+        PartitionedStakeReward, PartitionedStakeRewards, StakeRewardCalculation,
+        VoteRewardsAccounts, VoteRewardsAccountsStorable, REWARD_CALCULATION_NUM_BLOCKS,
     },
     crate::{
         bank::{
-            null_tracer, FilteredStakeDelegations, PrevEpochInflationRewards, RewardCalcTracer,
-            RewardCalculationEvent, RewardsMetrics, VoteReward, VoteRewards,
+            null_tracer, PrevEpochInflationRewards, RewardCalcTracer, RewardCalculationEvent,
+            RewardsMetrics, VoteReward, VoteRewards,
         },
         inflation_rewards::{
             points::{calculate_points, PointValue},
@@ -18,6 +18,7 @@ use {
         stake_account::StakeAccount,
         stakes::Stakes,
     },
+    agave_feature_set as feature_set,
     log::{debug, info},
     rayon::{
         iter::{IndexedParallelIterator, ParallelIterator},
@@ -25,6 +26,7 @@ use {
     },
     solana_clock::{Epoch, Slot},
     solana_measure::{measure::Measure, measure_us},
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_stake_interface::{stake_history::StakeHistory, state::Delegation},
     solana_sysvar::epoch_rewards::EpochRewards,
@@ -101,6 +103,29 @@ impl RewardsAccumulator {
 }
 
 impl Bank {
+    fn filter_stake_delegations<'a>(
+        &self,
+        stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+    ) -> FilteredStakeDelegations<'a> {
+        let min_stake_delegation = if self
+            .feature_set
+            .is_active(&feature_set::stake_minimum_delegation_for_rewards::id())
+        {
+            let min_stake_delegation = solana_stake_program::get_minimum_delegation(
+                self.feature_set
+                    .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
+            )
+            .max(LAMPORTS_PER_SOL);
+            Some(min_stake_delegation)
+        } else {
+            None
+        };
+        FilteredStakeDelegations {
+            stake_delegations,
+            min_stake_delegation,
+        }
+    }
+
     fn check_epoch_rewards_cache(&self) -> Option<Arc<PartitionedRewardsCalculation>> {
         let epoch_rewards_calculation_cache = self.epoch_rewards_calculation_cache.lock().unwrap();
         epoch_rewards_calculation_cache
@@ -410,7 +435,7 @@ impl Bank {
     ) -> EpochRewardCalculateParamInfo<'a> {
         // Use `stakes` for stake-related info
         let stake_history = stakes.history().clone();
-        let stake_delegations: Vec<_> = stakes.stake_delegations().iter().collect();
+        let stake_delegations = stakes.iterable_stake_delegations();
         let stake_delegations = self.filter_stake_delegations(stake_delegations);
 
         // Use `EpochStakes` for vote accounts
@@ -1568,7 +1593,7 @@ mod tests {
 
         // First fork: should compute and cache
         let stakes = bank.stakes_cache.stakes();
-        let stake_delegations: Vec<_> = stakes.stake_delegations().iter().collect();
+        let stake_delegations = stakes.iterable_stake_delegations();
         let stake_delegations = bank.filter_stake_delegations(stake_delegations);
         let stake_history = stakes.history().clone();
         let vote_accounts = stakes.vote_accounts();

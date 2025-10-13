@@ -4,8 +4,13 @@ mod epoch_rewards_hasher;
 mod sysvar;
 
 use {
-    super::{Bank, FilteredStakeDelegations},
-    crate::{inflation_rewards::points::PointValue, stake_history::StakeHistory},
+    super::Bank,
+    crate::{
+        inflation_rewards::points::PointValue, stake_account::StakeAccount,
+        stake_history::StakeHistory,
+    },
+    itertools::Either,
+    rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         partitioned_rewards::PartitionedEpochRewardsConfig,
@@ -15,7 +20,7 @@ use {
     solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_reward_info::RewardInfo,
-    solana_stake_interface::state::Stake,
+    solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
     std::{mem::MaybeUninit, sync::Arc},
 };
@@ -224,6 +229,48 @@ impl Default for CalculateValidatorRewardsResult {
                 points: 0,
                 rewards: 0,
             },
+        }
+    }
+}
+
+pub(super) struct FilteredStakeDelegations<'a> {
+    stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+    min_stake_delegation: Option<u64>,
+}
+
+impl<'a> FilteredStakeDelegations<'a> {
+    fn len(&self) -> usize {
+        self.stake_delegations.len()
+    }
+
+    fn par_iter(
+        &'a self,
+    ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount<Delegation>)>>
+    {
+        match self.min_stake_delegation {
+            Some(ref min_stake_delegation) => Either::Left(
+                self.stake_delegations
+                    .par_iter()
+                    // We yield `None` items instead of filtering them out to
+                    // keep the number of elements predictable. It's better to
+                    // let the callers deal with `None` elements and even store
+                    // them in collections (that are allocated once with the
+                    // size of `FilteredStakeDelegations::len`) rather than
+                    // `collect` yet another time (which would take ~100ms).
+                    .map(|(pubkey, stake_account)| {
+                        if stake_account.delegation().stake >= *min_stake_delegation {
+                            // Dereference `&&` to `&`.
+                            Some((*pubkey, *stake_account))
+                        } else {
+                            None
+                        }
+                    }),
+            ),
+            None => Either::Right(self.stake_delegations.par_iter().map(
+                |(pubkey, stake_account)|
+                        // Dereference `&&` to `&`.
+                        Some((*pubkey, *stake_account)),
+            )),
         }
     }
 }
