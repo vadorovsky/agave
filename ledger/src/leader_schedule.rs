@@ -26,7 +26,7 @@ pub trait LeaderScheduleVariant:
     std::fmt::Debug + Send + Sync + Index<u64, Output = Pubkey>
 {
     fn get_slot_leaders(&self) -> &[Pubkey];
-    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Vec<usize>, PubkeyHasherBuilder>;
+    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Arc<Vec<usize>>, PubkeyHasherBuilder>;
 
     /// Get the vote account address for the given epoch slot index. This is
     /// guaranteed to be Some if the leader schedule is keyed by vote account

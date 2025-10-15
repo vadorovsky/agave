@@ -3,7 +3,7 @@ use {
     solana_clock::Epoch,
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_vote::vote_account::VoteAccountsHashMap,
-    std::{collections::HashMap, ops::Index},
+    std::{collections::HashMap, ops::Index, sync::Arc},
 };
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -80,7 +80,7 @@ impl LeaderScheduleVariant for LeaderSchedule {
         self.identity_keyed_leader_schedule.get_slot_leaders()
     }
 
-    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Vec<usize>, PubkeyHasherBuilder> {
+    fn get_leader_slots_map(&self) -> &HashMap<Pubkey, Arc<Vec<usize>>, PubkeyHasherBuilder> {
         self.identity_keyed_leader_schedule.get_leader_slots_map()
     }
 
