@@ -9,7 +9,6 @@ use {
         inflation_rewards::points::PointValue, stake_account::StakeAccount,
         stake_history::StakeHistory,
     },
-    itertools::Either,
     rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
@@ -247,31 +246,27 @@ impl<'a> FilteredStakeDelegations<'a> {
         &'a self,
     ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount<Delegation>)>>
     {
-        match self.min_stake_delegation {
-            Some(ref min_stake_delegation) => Either::Left(
-                self.stake_delegations
-                    .par_iter()
-                    // We yield `None` items instead of filtering them out to
-                    // keep the number of elements predictable. It's better to
-                    // let the callers deal with `None` elements and even store
-                    // them in collections (that are allocated once with the
-                    // size of `FilteredStakeDelegations::len`) rather than
-                    // `collect` yet another time (which would take ~100ms).
-                    .map(|(pubkey, stake_account)| {
-                        if stake_account.delegation().stake >= *min_stake_delegation {
-                            // Dereference `&&` to `&`.
-                            Some((*pubkey, *stake_account))
-                        } else {
-                            None
-                        }
-                    }),
-            ),
-            None => Either::Right(self.stake_delegations.par_iter().map(
-                |(pubkey, stake_account)|
+        self.stake_delegations
+            .par_iter()
+            // We yield `None` items instead of filtering them out to
+            // keep the number of elements predictable. It's better to
+            // let the callers deal with `None` elements and even store
+            // them in collections (that are allocated once with the
+            // size of `FilteredStakeDelegations::len`) rather than
+            // `collect` yet another time (which would take ~100ms).
+            .map(|(pubkey, stake_account)| {
+                match self.min_stake_delegation {
+                    Some(min_stake_delegation)
+                        if stake_account.delegation().stake < min_stake_delegation =>
+                    {
+                        None
+                    }
+                    _ => {
                         // Dereference `&&` to `&`.
-                        Some((*pubkey, *stake_account)),
-            )),
-        }
+                        Some((*pubkey, *stake_account))
+                    }
+                }
+            })
     }
 }
 
@@ -294,20 +289,6 @@ pub(super) struct PartitionedRewardsCalculation {
     pub(super) prev_epoch_duration_in_years: f64,
     pub(super) capitalization: u64,
     point_value: PointValue,
-}
-
-pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
-    /// distributed vote rewards
-    pub(super) distributed_rewards: u64,
-    /// total rewards and points calculated for the current epoch, where points
-    /// equals the sum of (delegated stake * credits observed) for all
-    /// delegations and rewards are the lamports to split across all stake and
-    /// vote accounts
-    pub(super) point_value: PointValue,
-    /// stake rewards that still need to be distributed
-    pub(super) stake_rewards: Arc<PartitionedStakeRewards>,
-    // rewards calculation result that needs to be cached
-    pub(super) rewards_calculation: PartitionedRewardsCalculation,
 }
 
 pub(crate) type StakeRewards = Vec<StakeReward>;

@@ -438,7 +438,7 @@ impl Stakes<StakeAccount> {
     /// elements multiple times.
     ///
     /// [hamt]: https://en.wikipedia.org/wiki/Hash_array_mapped_trie
-    pub(crate) fn iterable_stake_delegations(&self) -> Vec<(&Pubkey, &StakeAccount)> {
+    pub(crate) fn to_vec(&self) -> Vec<(&Pubkey, &StakeAccount)> {
         self.stake_delegations.iter().collect()
     }
 
@@ -844,7 +844,7 @@ pub(crate) mod tests {
 
         {
             let stakes = stakes_cache.stakes();
-            let stake_delegations = stakes.iterable_stake_delegations();
+            let stake_delegations = stakes.to_vec();
             let vote_accounts = stakes.vote_accounts();
             assert_eq!(
                 vote_accounts.get_delegated_stake(&vote_pubkey),

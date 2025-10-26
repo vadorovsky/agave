@@ -67,9 +67,7 @@ use {
     ahash::AHashSet,
     dashmap::DashMap,
     log::*,
-    partitioned_epoch_rewards::{
-        CalculateRewardsAndDistributeVoteRewardsResult, PartitionedRewardsCalculation,
-    },
+    partitioned_epoch_rewards::PartitionedRewardsCalculation,
     rayon::{
         iter::{IntoParallelRefIterator, ParallelIterator},
         ThreadPool, ThreadPoolBuilder,
@@ -1057,7 +1055,7 @@ impl AtomicBankHashStats {
 struct NewEpochBundle {
     stake_history: CowStakeHistory,
     vote_accounts: VoteAccounts,
-    rewards_result: CalculateRewardsAndDistributeVoteRewardsResult,
+    rewards_result: Arc<PartitionedRewardsCalculation>,
     rewards_metrics: RewardsMetrics,
     activate_epoch_time_us: u64,
     update_rewards_with_thread_pool_time_us: u64,
@@ -1610,7 +1608,7 @@ impl Bank {
         thread_pool: &ThreadPool,
     ) -> NewEpochBundle {
         let stakes = self.stakes_cache.stakes();
-        let stake_delegations: Vec<_> = stakes.iterable_stake_delegations();
+        let stake_delegations: Vec<_> = stakes.to_vec();
 
         // Compute new stake history and vote accounts.
         let ((stake_history, vote_accounts), activate_epoch_time_us) = measure_us!(stakes
@@ -1624,7 +1622,7 @@ impl Bank {
         let mut rewards_metrics = RewardsMetrics::default();
         // Apply stake rewards and commission.
         let (rewards_result, update_rewards_with_thread_pool_time_us) = measure_us!(self
-            .calculate_rewards_and_distribute_vote_rewards(
+            .calculate_rewards(
                 &stake_history,
                 stake_delegations,
                 &vote_accounts,
@@ -1687,7 +1685,13 @@ impl Bank {
         let leader_schedule_epoch = self.epoch_schedule.get_leader_schedule_epoch(self.slot());
         let (_, update_epoch_stakes_time_us) =
             measure_us!(self.update_epoch_stakes(leader_schedule_epoch));
-        self.save_rewards(rewards_result, &rewards_metrics, parent_slot, parent_height);
+        self.save_rewards(
+            rewards_result,
+            &rewards_metrics,
+            parent_epoch,
+            parent_slot,
+            parent_height,
+        );
 
         report_new_epoch_metrics(
             epoch,
