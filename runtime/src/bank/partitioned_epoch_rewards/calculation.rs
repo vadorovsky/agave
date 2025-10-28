@@ -102,14 +102,14 @@ impl Bank {
     /// Begin the process of calculating and distributing rewards.
     /// This process can take multiple slots.
     pub(in crate::bank) fn begin_partitioned_rewards(
-        &mut self,
+        &self,
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
         thread_pool: &ThreadPool,
         parent_epoch: Epoch,
         parent_slot: Slot,
         parent_block_height: u64,
         rewards_metrics: &mut RewardsMetrics,
-    ) {
+    ) -> Arc<PartitionedStakeRewards> {
         let CalculateRewardsAndDistributeVoteRewardsResult {
             distributed_rewards,
             point_value,
@@ -127,8 +127,6 @@ impl Bank {
 
         let num_partitions = self.get_reward_distribution_num_blocks(&stake_rewards);
 
-        self.set_epoch_reward_status_calculation(distribution_starting_block_height, stake_rewards);
-
         self.create_epoch_rewards_sysvar(
             distributed_rewards,
             distribution_starting_block_height,
@@ -144,6 +142,8 @@ impl Bank {
             ("parent_slot", parent_slot, i64),
             ("parent_block_height", parent_block_height, i64),
         );
+
+        stake_rewards
     }
 
     // Calculate rewards from previous epoch and distribute vote rewards

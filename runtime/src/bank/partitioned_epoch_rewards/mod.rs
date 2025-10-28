@@ -337,9 +337,10 @@ impl Bank {
 
     pub(crate) fn set_epoch_reward_status_calculation(
         &mut self,
-        distribution_starting_block_height: u64,
         stake_rewards: Arc<PartitionedStakeRewards>,
     ) {
+        let distribution_starting_block_height =
+            self.block_height() + REWARD_CALCULATION_NUM_BLOCKS;
         self.epoch_reward_status =
             EpochRewardStatus::Active(EpochRewardPhase::Calculation(StartBlockHeightAndRewards {
                 distribution_starting_block_height,
