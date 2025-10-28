@@ -67,7 +67,7 @@ use {
     ahash::AHashSet,
     dashmap::DashMap,
     log::*,
-    partitioned_epoch_rewards::PartitionedRewardsCalculation,
+    partitioned_epoch_rewards::{PartitionedRewardsCalculation, PartitionedStakeRewards},
     rayon::{ThreadPool, ThreadPoolBuilder},
     serde::{Deserialize, Serialize},
     solana_account::{
@@ -1054,7 +1054,9 @@ impl AtomicBankHashStats {
 struct NewEpochBundle {
     stake_history: CowStakeHistory,
     vote_accounts: VoteAccounts,
+    stake_rewards: Arc<PartitionedStakeRewards>,
     calculate_activated_stake_time_us: u64,
+    update_rewards_with_thread_pool_time_us: u64,
 }
 
 impl Bank {
@@ -1602,7 +1604,15 @@ impl Bank {
 
     /// Returns updated stake history and vote accounts that includes new
     /// activated stake from the last epoch.
-    fn compute_new_epoch_caches_and_rewards(&self, thread_pool: &ThreadPool) -> NewEpochBundle {
+    fn compute_new_epoch_caches_and_rewards(
+        &self,
+        thread_pool: &ThreadPool,
+        parent_epoch: Epoch,
+        parent_slot: Slot,
+        parent_height: u64,
+        reward_calc_tracer: Option<impl RewardCalcTracer>,
+        rewards_metrics: &mut RewardsMetrics,
+    ) -> NewEpochBundle {
         let stakes = self.stakes_cache.stakes();
         let stake_delegations = stakes.stake_delegations_vec();
         let ((stake_history, vote_accounts), calculate_activated_stake_time_us) =
@@ -1612,10 +1622,25 @@ impl Bank {
                 self.new_warmup_cooldown_rate_epoch(),
                 &stake_delegations
             ));
+        // Apply stake rewards and commission using new snapshots.
+        let (stake_rewards, update_rewards_with_thread_pool_time_us) = measure_us!(self
+            .begin_partitioned_rewards(
+                &stake_history,
+                &stake_delegations,
+                &vote_accounts,
+                reward_calc_tracer,
+                thread_pool,
+                parent_epoch,
+                parent_slot,
+                parent_height,
+                rewards_metrics,
+            ));
         NewEpochBundle {
             stake_history,
             vote_accounts,
+            stake_rewards,
             calculate_activated_stake_time_us,
+            update_rewards_with_thread_pool_time_us,
         }
     }
 
@@ -1641,11 +1666,21 @@ impl Bank {
         // Add new entry to stakes.stake_history, set appropriate epoch and
         // update vote accounts with warmed up stakes before saving a
         // snapshot of stakes in epoch stakes
+        let mut rewards_metrics = RewardsMetrics::default();
         let NewEpochBundle {
             stake_history,
             vote_accounts,
+            stake_rewards,
             calculate_activated_stake_time_us,
-        } = self.compute_new_epoch_caches_and_rewards(&thread_pool);
+            update_rewards_with_thread_pool_time_us,
+        } = self.compute_new_epoch_caches_and_rewards(
+            &thread_pool,
+            parent_epoch,
+            parent_slot,
+            parent_height,
+            reward_calc_tracer,
+            &mut rewards_metrics,
+        );
         self.stakes_cache
             .activate_epoch(epoch, stake_history, vote_accounts);
 
@@ -1654,17 +1689,6 @@ impl Bank {
         let (_, update_epoch_stakes_time_us) =
             measure_us!(self.update_epoch_stakes(leader_schedule_epoch));
 
-        let mut rewards_metrics = RewardsMetrics::default();
-        // After saving a snapshot of stakes, apply stake rewards and commission
-        let (stake_rewards, update_rewards_with_thread_pool_time_us) = measure_us!(self
-            .begin_partitioned_rewards(
-                reward_calc_tracer,
-                &thread_pool,
-                parent_epoch,
-                parent_slot,
-                parent_height,
-                &mut rewards_metrics,
-            ));
         self.set_epoch_reward_status_calculation(stake_rewards);
 
         report_new_epoch_metrics(
