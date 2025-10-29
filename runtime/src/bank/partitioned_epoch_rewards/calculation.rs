@@ -672,8 +672,7 @@ mod tests {
                 partitioned_epoch_rewards::{
                     tests::{
                         build_partitioned_stake_rewards, create_default_reward_bank,
-                        create_reward_bank, create_reward_bank_with_specific_stakes, RewardBank,
-                        SLOTS_PER_EPOCH,
+                        create_reward_bank, RewardBank, SLOTS_PER_EPOCH,
                     },
                     EpochRewardPhase, EpochRewardStatus, PartitionedStakeRewards,
                     StartBlockHeightAndPartitionedRewards,
@@ -783,7 +782,7 @@ mod tests {
             .map(|_| 2_000_000_000)
             .chain((0..delegations_without_rewards).map(|_| 500_000_000))
             .collect::<Vec<_>>();
-        let bank = create_reward_bank_with_specific_stakes(
+        let bank = Bank::new_with_specific_stakes(
             stakes,
             PartitionedEpochRewardsConfig::default().stake_account_stores_per_block,
             SLOTS_PER_EPOCH,
@@ -1141,11 +1140,8 @@ mod tests {
         let mut stakes = vec![2_000_000_000; expected_num_delegations];
         // Add stake large enough to be affected by total-rewards discrepancy
         stakes.push(40_000_000_000);
-        let (RewardBank { bank, .. }, _) = create_reward_bank_with_specific_stakes(
-            stakes,
-            num_rewards_per_block,
-            SLOTS_PER_EPOCH - 1,
-        );
+        let (RewardBank { bank, .. }, _) =
+            Bank::new_with_specific_stakes(stakes, num_rewards_per_block, SLOTS_PER_EPOCH - 1);
         let rewarded_epoch = bank.epoch();
 
         // Advance to next epoch boundary to update EpochStakes Kludgy because
@@ -1266,11 +1262,8 @@ mod tests {
             3_000_000_000, // valid delegation
             4_000_000_000, // valid delegation
         ];
-        let (RewardBank { bank, .. }, _) = create_reward_bank_with_specific_stakes(
-            stakes,
-            num_rewards_per_block,
-            SLOTS_PER_EPOCH - 1,
-        );
+        let (RewardBank { bank, .. }, _) =
+            Bank::new_with_specific_stakes(stakes, num_rewards_per_block, SLOTS_PER_EPOCH - 1);
 
         // Advance to next epoch boundary
         let new_slot = bank.slot() + 1;

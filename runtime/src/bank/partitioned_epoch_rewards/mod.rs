@@ -514,91 +514,10 @@ mod tests {
         stake_account_stores_per_block: u64,
         advance_num_slots: u64,
     ) -> (RewardBank, Arc<RwLock<BankForks>>) {
-        create_reward_bank_with_specific_stakes(
+        Bank::new_with_specific_stakes(
             vec![2_000_000_000; expected_num_delegations],
             stake_account_stores_per_block,
             advance_num_slots,
-        )
-    }
-
-    pub(super) fn create_reward_bank_with_specific_stakes(
-        stakes: Vec<u64>,
-        stake_account_stores_per_block: u64,
-        advance_num_slots: u64,
-    ) -> (RewardBank, Arc<RwLock<BankForks>>) {
-        let validator_keypairs = (0..stakes.len())
-            .map(|_| ValidatorVoteKeypairs::new_rand())
-            .collect::<Vec<_>>();
-
-        let GenesisConfigInfo {
-            mut genesis_config, ..
-        } = create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes);
-        genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
-
-        let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
-        accounts_db_config.partitioned_epoch_rewards_config =
-            PartitionedEpochRewardsConfig::new_for_test(stake_account_stores_per_block);
-
-        let bank = Bank::new_from_genesis(
-            &genesis_config,
-            Arc::new(RuntimeConfig::default()),
-            Vec::new(),
-            None,
-            accounts_db_config,
-            None,
-            Some(Pubkey::new_unique()),
-            Arc::default(),
-            None,
-            None,
-        );
-
-        // Fill bank_forks with banks with votes landing in the next slot
-        // Create enough banks such that vote account will root
-        for validator_vote_keypairs in &validator_keypairs {
-            let vote_id = validator_vote_keypairs.vote_keypair.pubkey();
-            let mut vote_account = bank.get_account(&vote_id).unwrap();
-            // generate some rewards
-            let mut vote_state =
-                Some(VoteStateV4::deserialize(vote_account.data(), &vote_id).unwrap());
-            for i in 0..MAX_LOCKOUT_HISTORY + 42 {
-                if let Some(v) = vote_state.as_mut() {
-                    vote_state::process_slot_vote_unchecked(v, i as u64)
-                }
-                let versioned = VoteStateVersions::V4(Box::new(vote_state.take().unwrap()));
-                vote_account.set_state(&versioned).unwrap();
-                match versioned {
-                    VoteStateVersions::V4(v) => {
-                        vote_state = Some(*v);
-                    }
-                    _ => panic!("Has to be of type V4"),
-                };
-            }
-            bank.store_account_and_update_capitalization(&vote_id, &vote_account);
-        }
-
-        // Advance some num slots; usually to the next epoch boundary to update
-        // EpochStakes
-        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-        let bank = Bank::new_from_parent_with_bank_forks(
-            &bank_forks,
-            bank,
-            &Pubkey::default(),
-            advance_num_slots,
-        );
-
-        (
-            RewardBank {
-                bank,
-                voters: validator_keypairs
-                    .iter()
-                    .map(|k| k.vote_keypair.pubkey())
-                    .collect(),
-                stakers: validator_keypairs
-                    .iter()
-                    .map(|k| k.stake_keypair.pubkey())
-                    .collect(),
-            },
-            bank_forks,
         )
     }
 
