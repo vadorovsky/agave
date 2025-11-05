@@ -195,7 +195,14 @@ use {
     solana_nonce_account::{get_system_account_kind, SystemAccountKind},
     solana_program_runtime::sysvar_cache::SysvarCache,
 };
-pub use {partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_reward_info::RewardType};
+pub use {
+    partitioned_epoch_rewards::KeyedRewardsAndNumPartitions,
+    solana_reward_info::RewardType,
+    transaction_log_collector::{
+        TransactionLogCollector, TransactionLogCollectorConfig, TransactionLogCollectorFilter,
+        TransactionLogInfo,
+    },
+};
 
 /// params to `verify_accounts_hash`
 struct VerifyAccountsHashConfig {
@@ -213,6 +220,7 @@ pub(crate) mod partitioned_epoch_rewards;
 mod recent_blockhashes_account;
 mod serde_snapshot;
 mod sysvar_cache;
+mod transaction_log_collector;
 pub(crate) mod tests;
 
 pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
@@ -363,57 +371,6 @@ impl TransactionBalancesSet {
 pub type TransactionBalances = Vec<Vec<u64>>;
 
 pub type PreCommitResult<'a> = Result<Option<RwLockReadGuard<'a, Hash>>>;
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
-pub enum TransactionLogCollectorFilter {
-    All,
-    AllWithVotes,
-    #[default]
-    None,
-    OnlyMentionedAddresses,
-}
-
-#[derive(Debug, Default)]
-pub struct TransactionLogCollectorConfig {
-    pub mentioned_addresses: HashSet<Pubkey>,
-    pub filter: TransactionLogCollectorFilter,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TransactionLogInfo {
-    pub signature: Signature,
-    pub result: Result<()>,
-    pub is_vote: bool,
-    pub log_messages: TransactionLogMessages,
-}
-
-#[derive(Default, Debug)]
-pub struct TransactionLogCollector {
-    // All the logs collected for from this Bank.  Exact contents depend on the
-    // active `TransactionLogCollectorFilter`
-    pub logs: Vec<TransactionLogInfo>,
-
-    // For each `mentioned_addresses`, maintain a list of indices into `logs` to easily
-    // locate the logs from transactions that included the mentioned addresses.
-    pub mentioned_address_map: HashMap<Pubkey, Vec<usize>>,
-}
-
-impl TransactionLogCollector {
-    pub fn get_logs_for_address(
-        &self,
-        address: Option<&Pubkey>,
-    ) -> Option<Vec<TransactionLogInfo>> {
-        match address {
-            None => Some(self.logs.clone()),
-            Some(address) => self.mentioned_address_map.get(address).map(|log_indices| {
-                log_indices
-                    .iter()
-                    .filter_map(|i| self.logs.get(*i).cloned())
-                    .collect()
-            }),
-        }
-    }
-}
 
 /// Bank's common fields shared by all supported snapshot versions for deserialization.
 /// Sync fields with BankFieldsToSerialize! This is paired with it.
