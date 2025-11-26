@@ -682,16 +682,8 @@ mod tests {
                 RewardInfo, VoteReward,
             },
             stake_account::StakeAccount,
-<<<<<<< HEAD
-            stake_utils,
-=======
-<<<<<<< HEAD
->>>>>>> f69ece2144 (runtime: Add test for epoch boundary (#8838))
-            stakes::Stakes,
-=======
             stake_utils,
             stakes::{tests::create_staked_node_accounts, Stakes},
->>>>>>> 30d8afd32 (runtime: Add test for epoch boundary (#8838))
         },
         agave_feature_set::FeatureSet,
         rayon::ThreadPoolBuilder,
@@ -1426,11 +1418,6 @@ mod tests {
         assert_eq!(vote_reward_c.commission, 10);
         assert_eq!(vote_reward_c.vote_rewards, 50);
     }
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
-=======
->>>>>>> f69ece2144 (runtime: Add test for epoch boundary (#8838))
 
     #[test]
     fn test_epoch_rewards_cache_multiple_forks() {
@@ -1505,8 +1492,6 @@ mod tests {
             );
         }
     }
-<<<<<<< HEAD
-=======
 
     fn add_voters_and_populate(
         bank: &Arc<Bank>,
@@ -1655,6 +1640,4 @@ mod tests {
             Some(parent_capitalization), // parent_capitalization
         );
     }
->>>>>>> 30d8afd32 (runtime: Add test for epoch boundary (#8838))
->>>>>>> f69ece2144 (runtime: Add test for epoch boundary (#8838))
 }
