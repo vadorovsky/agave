@@ -88,7 +88,7 @@ impl ZkProofData<BatchedRangeProofContext> for BatchedRangeProofU128Data {
         let proof: RangeProof = self.proof.try_into()?;
 
         proof
-            .verify(commitments.iter().collect(), bit_lengths, &mut transcript)
+            .verify(commitments, bit_lengths, &mut transcript)
             .map_err(|e| e.into())
     }
 }

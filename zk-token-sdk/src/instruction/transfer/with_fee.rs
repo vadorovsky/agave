@@ -583,7 +583,7 @@ impl TransferWithFeeProof {
             .ok_or(ProofGenerationError::FeeCalculation)?;
 
         let range_proof = RangeProof::new(
-            vec![
+            &[
                 source_new_balance,
                 transfer_amount_lo,
                 transfer_amount_hi,
@@ -593,7 +593,7 @@ impl TransferWithFeeProof {
                 fee_amount_hi,
                 amount_sub_fee,
             ],
-            vec![
+            &[
                 TRANSFER_SOURCE_AMOUNT_BITS, // 64
                 TRANSFER_AMOUNT_LO_BITS,     // 16
                 TRANSFER_AMOUNT_HI_BITS,     // 32
@@ -603,7 +603,7 @@ impl TransferWithFeeProof {
                 FEE_AMOUNT_HI_BITS,          // 32
                 TRANSFER_SOURCE_AMOUNT_BITS, // 64
             ],
-            vec![
+            &[
                 &opening_source,
                 opening_lo,
                 opening_hi,
@@ -742,7 +742,7 @@ impl TransferWithFeeProof {
         let amount_sub_fee_commitment = combined_commitment - combined_fee_commitment;
 
         range_proof.verify(
-            vec![
+            &[
                 &new_source_commitment,
                 ciphertext_lo.get_commitment(),
                 ciphertext_hi.get_commitment(),
@@ -752,7 +752,7 @@ impl TransferWithFeeProof {
                 fee_ciphertext_hi.get_commitment(),
                 &amount_sub_fee_commitment,
             ],
-            vec![
+            &[
                 TRANSFER_SOURCE_AMOUNT_BITS, // 64
                 TRANSFER_AMOUNT_LO_BITS,     // 16
                 TRANSFER_AMOUNT_HI_BITS,     // 32

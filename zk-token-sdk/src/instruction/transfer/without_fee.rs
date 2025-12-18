@@ -340,13 +340,13 @@ impl TransferProof {
         // generate the range proof
         let range_proof = if TRANSFER_AMOUNT_LO_BITS == 32 {
             RangeProof::new(
-                vec![source_new_balance, transfer_amount_lo, transfer_amount_hi],
-                vec![
+                &[source_new_balance, transfer_amount_lo, transfer_amount_hi],
+                &[
                     TRANSFER_SOURCE_AMOUNT_BITS,
                     TRANSFER_AMOUNT_LO_BITS,
                     TRANSFER_AMOUNT_HI_BITS,
                 ],
-                vec![&source_opening, opening_lo, opening_hi],
+                &[&source_opening, opening_lo, opening_hi],
                 transcript,
             )
         } else {
@@ -355,19 +355,19 @@ impl TransferProof {
             let opening_lo_negated = &PedersenOpening::default() - opening_lo;
 
             RangeProof::new(
-                vec![
+                &[
                     source_new_balance,
                     transfer_amount_lo,
                     transfer_amount_lo_negated,
                     transfer_amount_hi,
                 ],
-                vec![
+                &[
                     TRANSFER_SOURCE_AMOUNT_BITS,
                     TRANSFER_AMOUNT_LO_BITS,
                     TRANSFER_AMOUNT_LO_NEGATED_BITS,
                     TRANSFER_AMOUNT_HI_BITS,
                 ],
-                vec![&source_opening, opening_lo, &opening_lo_negated, opening_hi],
+                &[&source_opening, opening_lo, &opening_lo_negated, opening_hi],
                 transcript,
             )
         }?;
@@ -430,12 +430,12 @@ impl TransferProof {
         let new_source_commitment = self.new_source_commitment.try_into()?;
         if TRANSFER_AMOUNT_LO_BITS == 32 {
             range_proof.verify(
-                vec![
+                &[
                     &new_source_commitment,
                     ciphertext_lo.get_commitment(),
                     ciphertext_hi.get_commitment(),
                 ],
-                vec![
+                &[
                     TRANSFER_SOURCE_AMOUNT_BITS,
                     TRANSFER_AMOUNT_LO_BITS,
                     TRANSFER_AMOUNT_HI_BITS,
@@ -446,13 +446,13 @@ impl TransferProof {
             let commitment_lo_negated = &(*COMMITMENT_MAX) - ciphertext_lo.get_commitment();
 
             range_proof.verify(
-                vec![
+                &[
                     &new_source_commitment,
                     ciphertext_lo.get_commitment(),
                     &commitment_lo_negated,
                     ciphertext_hi.get_commitment(),
                 ],
-                vec![
+                &[
                     TRANSFER_SOURCE_AMOUNT_BITS,
                     TRANSFER_AMOUNT_LO_BITS,
                     TRANSFER_AMOUNT_LO_NEGATED_BITS,

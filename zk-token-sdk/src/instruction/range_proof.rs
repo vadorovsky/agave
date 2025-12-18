@@ -13,7 +13,7 @@ use {
         transcript::TranscriptProtocol,
     },
     merlin::Transcript,
-    std::convert::TryInto,
+    std::{convert::TryInto, slice},
 };
 use {
     crate::{
@@ -64,9 +64,14 @@ impl RangeProofU64Data {
         // `unwrap` here. A simple case `u64::BITS as usize` can silently overflow.
         let bit_size = usize::try_from(u64::BITS).unwrap();
 
-        let proof = RangeProof::new(vec![amount], vec![bit_size], vec![opening], &mut transcript)?
-            .try_into()
-            .map_err(|_| ProofGenerationError::ProofLength)?;
+        let proof = RangeProof::new(
+            slice::from_ref(&amount),
+            slice::from_ref(&bit_size),
+            slice::from_ref(opening),
+            &mut transcript,
+        )?
+        .try_into()
+        .map_err(|_| ProofGenerationError::ProofLength)?;
 
         Ok(Self { context, proof })
     }
@@ -82,12 +87,16 @@ impl ZkProofData<RangeProofContext> for RangeProofU64Data {
     #[cfg(not(target_os = "solana"))]
     fn verify_proof(&self) -> Result<(), ProofVerificationError> {
         let mut transcript = self.context_data().new_transcript();
-        let commitment = self.context.commitment.try_into()?;
+        let commitment: PedersenCommitment = self.context.commitment.try_into()?;
         let proof: RangeProof = self.proof.try_into()?;
 
         let bit_size = usize::try_from(u64::BITS).unwrap();
         proof
-            .verify(vec![&commitment], vec![bit_size], &mut transcript)
+            .verify(
+                slice::from_ref(&commitment),
+                slice::from_ref(&bit_size),
+                &mut transcript,
+            )
             .map_err(|e| e.into())
     }
 }

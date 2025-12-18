@@ -31,6 +31,7 @@ use {
     },
     merlin::Transcript,
     rand::rngs::OsRng,
+    std::borrow::Borrow,
     subtle::{Choice, ConditionallySelectable},
 };
 
@@ -70,12 +71,22 @@ impl RangeProof {
     /// The sum of the bit-lengths of the commitments amounts must be a power-of-two
     #[allow(clippy::many_single_char_names)]
     #[cfg(not(target_os = "solana"))]
-    pub fn new(
-        amounts: Vec<u64>,
-        bit_lengths: Vec<usize>,
-        openings: Vec<&PedersenOpening>,
+    pub fn new<A, B, O, PO>(
+        amounts: A,
+        bit_lengths: B,
+        openings: O,
         transcript: &mut Transcript,
-    ) -> Result<Self, RangeProofGenerationError> {
+    ) -> Result<Self, RangeProofGenerationError>
+    where
+        A: AsRef<[u64]>,
+        B: AsRef<[usize]>,
+        O: AsRef<[PO]>,
+        PO: Borrow<PedersenOpening>,
+    {
+        let amounts = amounts.as_ref();
+        let bit_lengths = bit_lengths.as_ref();
+        let openings = openings.as_ref();
+
         // amounts, bit-lengths, openings must be same length vectors
         let m = amounts.len();
         if bit_lengths.len() != m || openings.len() != m {
@@ -197,7 +208,7 @@ impl RangeProof {
         let mut exp_z = z;
         for opening in openings {
             exp_z *= z;
-            agg_opening += exp_z * opening.get_scalar();
+            agg_opening += exp_z * opening.borrow().get_scalar();
         }
 
         let t_blinding_poly = util::Poly2(
@@ -254,12 +265,20 @@ impl RangeProof {
     }
 
     #[allow(clippy::many_single_char_names)]
-    pub fn verify(
+    pub fn verify<C, PC, B>(
         &self,
-        comms: Vec<&PedersenCommitment>,
-        bit_lengths: Vec<usize>,
+        comms: C,
+        bit_lengths: B,
         transcript: &mut Transcript,
-    ) -> Result<(), RangeProofVerificationError> {
+    ) -> Result<(), RangeProofVerificationError>
+    where
+        C: AsRef<[PC]>,
+        PC: Borrow<PedersenCommitment>,
+        B: AsRef<[usize]>,
+    {
+        let comms = comms.as_ref();
+        let bit_lengths = bit_lengths.as_ref();
+
         // commitments and bit-lengths must be same length vectors
         if comms.len() != bit_lengths.len() {
             return Err(RangeProofVerificationError::VectorLengthMismatch);
@@ -346,7 +365,7 @@ impl RangeProof {
                 .chain(self.ipp_proof.R_vec.iter().map(|R| R.decompress()))
                 .chain(bp_gens.G(nm).map(|&x| Some(x)))
                 .chain(bp_gens.H(nm).map(|&x| Some(x)))
-                .chain(comms.iter().map(|V| Some(*V.get_point()))),
+                .chain(comms.iter().map(|V| Some(*V.borrow().get_point()))),
         )
         .ok_or(RangeProofVerificationError::MultiscalarMul)?;
 
@@ -434,9 +453,37 @@ fn delta(bit_lengths: &[usize], y: &Scalar, z: &Scalar) -> Scalar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::slice;
 
     #[test]
     fn test_single_rangeproof() {
+        let (comm, open) = Pedersen::new(55_u64);
+
+        let mut transcript_create = Transcript::new(b"Test");
+        let mut transcript_verify = Transcript::new(b"Test");
+
+        let proof = RangeProof::new(
+            slice::from_ref(&55),
+            slice::from_ref(&32),
+            slice::from_ref(&open),
+            &mut transcript_create,
+        )
+        .unwrap();
+
+        assert!(proof
+            .verify(
+                slice::from_ref(&comm),
+                slice::from_ref(&32),
+                &mut transcript_verify
+            )
+            .is_ok());
+    }
+
+    // We used to require passing owned vectors to `RangeProof::new` and
+    // `RangeProof::verify`. Make sure that the new API based on `AsRef` does
+    // not break old users.
+    #[test]
+    fn test_single_rangeproof_vectors() {
         let (comm, open) = Pedersen::new(55_u64);
 
         let mut transcript_create = Transcript::new(b"Test");
@@ -460,17 +507,17 @@ mod tests {
         let mut transcript_verify = Transcript::new(b"Test");
 
         let proof = RangeProof::new(
-            vec![55, 77, 99],
-            vec![64, 32, 32],
-            vec![&open_1, &open_2, &open_3],
+            &[55, 77, 99],
+            &[64, 32, 32],
+            &[&open_1, &open_2, &open_3],
             &mut transcript_create,
         )
         .unwrap();
 
         assert!(proof
             .verify(
-                vec![&comm_1, &comm_2, &comm_3],
-                vec![64, 32, 32],
+                &[&comm_1, &comm_2, &comm_3],
+                &[64, 32, 32],
                 &mut transcript_verify,
             )
             .is_ok());

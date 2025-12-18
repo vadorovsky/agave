@@ -11,7 +11,7 @@ use {
         transcript::TranscriptProtocol,
     },
     merlin::Transcript,
-    std::convert::TryInto,
+    std::{convert::TryInto, slice},
 };
 use {
     crate::{
@@ -156,8 +156,12 @@ impl WithdrawProof {
             transcript,
         );
 
-        let range_proof =
-            RangeProof::new(vec![final_balance], vec![64], vec![&opening], transcript)?;
+        let range_proof = RangeProof::new(
+            slice::from_ref(&final_balance),
+            slice::from_ref(&64),
+            slice::from_ref(&opening),
+            transcript,
+        )?;
 
         Ok(Self {
             commitment: pod_commitment,
@@ -185,8 +189,8 @@ impl WithdrawProof {
 
         // verify range proof
         range_proof.verify(
-            vec![&commitment],
-            vec![WITHDRAW_AMOUNT_BIT_LENGTH],
+            slice::from_ref(&commitment),
+            slice::from_ref(&WITHDRAW_AMOUNT_BIT_LENGTH),
             transcript,
         )?;
 
