@@ -1014,7 +1014,9 @@ impl AccountsDb {
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO: usize = 3_000_000_000;
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI: usize = 3_100_000_000;
+    const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI_EVICT: usize = 3_100_000_000;
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    const DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI_BLOCK: usize = 3_200_000_000;
 
     // See AccountsDbConfig::read_cache_evict_sample_size.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -1050,7 +1052,8 @@ impl AccountsDb {
 
         let read_cache_size = accounts_db_config.read_cache_limit_bytes.unwrap_or((
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
-            Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
+            Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI_EVICT,
+            Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI_BLOCK,
         ));
         let read_cache_evict_sample_size = accounts_db_config
             .read_cache_evict_sample_size
@@ -1102,6 +1105,7 @@ impl AccountsDb {
             read_only_accounts_cache: ReadOnlyAccountsCache::new(
                 read_cache_size.0,
                 read_cache_size.1,
+                read_cache_size.2,
                 read_cache_evict_sample_size,
             ),
             write_cache_limit_bytes: accounts_db_config.write_cache_limit_bytes,

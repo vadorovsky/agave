@@ -378,7 +378,7 @@ pub fn execute(
     let read_cache_limit_bytes =
         values_of::<usize>(matches, "accounts_db_read_cache_limit").map(|limits| {
             match limits.len() {
-                2 => (limits[0], limits[1]),
+                3 => (limits[0], limits[1], limits[2]),
                 _ => {
                     // clap will enforce two values are given
                     unreachable!("invalid number of values given to accounts-db-read-cache-limit")

@@ -77,8 +77,9 @@ struct AtomicReadOnlyCacheStats {
 #[derive(Debug)]
 pub(crate) struct ReadOnlyAccountsCache {
     cache: Arc<DashMap<ReadOnlyCacheKey, ReadOnlyAccountCacheEntry, AHashRandomState>>,
-    _max_data_size_lo: usize,
-    _max_data_size_hi: usize,
+    max_data_size_lo: usize,
+    _max_data_size_hi_evict: usize,
+    max_data_size_hi_block: usize,
     data_size: Arc<AtomicUsize>,
 
     // Performance statistics
@@ -87,6 +88,13 @@ pub(crate) struct ReadOnlyAccountsCache {
 
     /// Timer for generating timestamps for entries.
     timer: Instant,
+
+    /// Whether storing new entries is allowed.
+    ///
+    /// This option is enabled at the beginning, then disabled once `data_size`
+    /// exceeds `_max_data_size_hi_block`, then enabled once it goes back below
+    /// `_max_data_size_lo`.
+    allow_store: AtomicBool,
 
     /// To the evictor goes the spoiled [sic]
     ///
@@ -100,10 +108,12 @@ impl ReadOnlyAccountsCache {
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new(
         max_data_size_lo: usize,
-        max_data_size_hi: usize,
+        max_data_size_hi_evict: usize,
+        max_data_size_hi_block: usize,
         evict_sample_size: usize,
     ) -> Self {
-        assert!(max_data_size_lo <= max_data_size_hi);
+        assert!(max_data_size_lo <= max_data_size_hi_evict);
+        assert!(max_data_size_hi_evict <= max_data_size_hi_block);
         assert!(evict_sample_size > 0);
         let cache = Arc::new(DashMap::with_hasher(AHashRandomState::default()));
         let data_size = Arc::new(AtomicUsize::default());
@@ -113,7 +123,7 @@ impl ReadOnlyAccountsCache {
         let evictor_thread_handle = Self::spawn_evictor(
             evictor_exit_flag.clone(),
             max_data_size_lo,
-            max_data_size_hi,
+            max_data_size_hi_evict,
             data_size.clone(),
             evict_sample_size,
             cache.clone(),
@@ -122,12 +132,14 @@ impl ReadOnlyAccountsCache {
 
         Self {
             highest_slot_stored: AtomicU64::default(),
-            _max_data_size_lo: max_data_size_lo,
-            _max_data_size_hi: max_data_size_hi,
+            max_data_size_lo: max_data_size_lo,
+            _max_data_size_hi_evict: max_data_size_hi_evict,
+            max_data_size_hi_block: max_data_size_hi_block,
             cache,
             data_size,
             stats,
             timer,
+            allow_store: AtomicBool::new(true),
             evictor_thread_handle: ManuallyDrop::new(evictor_thread_handle),
             evictor_exit_flag,
         }
@@ -173,7 +185,15 @@ impl ReadOnlyAccountsCache {
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn store(&self, pubkey: Pubkey, slot: Slot, account: AccountSharedData) {
-        self.store_with_timestamp(pubkey, slot, account, self.timestamp())
+        if self.allow_store.load(Ordering::Acquire) {
+            self.store_with_timestamp(pubkey, slot, account, self.timestamp());
+            if self.data_size() >= self.max_data_size_hi_block {
+                self.allow_store.store(false, Ordering::Release);
+            }
+        } else if self.data_size() <= self.max_data_size_lo {
+            self.allow_store.store(true, Ordering::Release);
+            self.store_with_timestamp(pubkey, slot, account, self.timestamp());
+        }
     }
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -415,7 +435,7 @@ impl ReadOnlyAccountsCache {
         C: FnMut(&Pubkey, Option<ReadOnlyAccountCacheEntry>),
     {
         #[allow(clippy::used_underscore_binding)]
-        let target_data_size = self._max_data_size_lo;
+        let target_data_size = self.max_data_size_lo;
         Self::evict(
             target_data_size,
             &self.data_size,
@@ -491,6 +511,7 @@ mod tests {
         let cache = ReadOnlyAccountsCache::new(
             MAX_CACHE_SIZE,
             usize::MAX, // <-- do not evict in the background
+            usize::MAX, // <-- do not block stores
             evict_sample_size,
         );
         let slots: Vec<Slot> = repeat_with(|| rng.random_range(0..1000)).take(5).collect();
@@ -553,7 +574,12 @@ mod tests {
         const ACCOUNT_DATA_SIZE: usize = 200;
         const MAX_ENTRIES: usize = 7;
         const MAX_CACHE_SIZE: usize = MAX_ENTRIES * (CACHE_ENTRY_SIZE + ACCOUNT_DATA_SIZE);
-        let cache = ReadOnlyAccountsCache::new(MAX_CACHE_SIZE, MAX_CACHE_SIZE, evict_sample_size);
+        let cache = ReadOnlyAccountsCache::new(
+            MAX_CACHE_SIZE,
+            MAX_CACHE_SIZE,
+            MAX_CACHE_SIZE,
+            evict_sample_size,
+        );
 
         for i in 0..MAX_ENTRIES {
             let pubkey = Pubkey::new_unique();

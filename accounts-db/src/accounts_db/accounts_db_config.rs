@@ -28,7 +28,7 @@ pub struct AccountsDbConfig {
     pub shrink_ratio: AccountShrinkThreshold,
     /// The low and high watermark sizes for the read cache, in bytes.
     /// If None, defaults will be used.
-    pub read_cache_limit_bytes: Option<(usize, usize)>,
+    pub read_cache_limit_bytes: Option<(usize, usize, usize)>,
     /// The number of elements that will be randomly sampled at eviction time,
     /// the oldest of which will get evicted.
     pub read_cache_evict_sample_size: Option<usize>,

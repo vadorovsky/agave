@@ -27,6 +27,7 @@ fn test_read_only_accounts_cache_eviction(num_accounts: (usize, usize), evict_sa
     let cache = ReadOnlyAccountsCache::new(
         max_cache_size,
         usize::MAX, // <-- do not evict in the background
+        usize::MAX, // <-- do not block stores
         evict_sample_size,
     );
     let data = vec![0u8; DATA_SIZE];

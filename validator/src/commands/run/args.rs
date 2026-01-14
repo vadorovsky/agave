@@ -1039,17 +1039,19 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     .arg(
         Arg::with_name("accounts_db_read_cache_limit")
             .long("accounts-db-read-cache-limit")
-            .value_name("LOW,HIGH")
+            .value_name("LOW,HIGH_EVICT,HIGH_BLOCK")
             .takes_value(true)
-            .min_values(2)
-            .max_values(2)
+            .min_values(3)
+            .max_values(3)
             .multiple(false)
             .require_delimiter(true)
             .help("How large the read cache for account data can become, in bytes")
             .long_help(
                 "How large the read cache for account data can become, in bytes. The values will \
-                 be the low and high watermarks for the cache. When the cache exceeds the high \
-                 watermark, entries will be evicted until the size reaches the low watermark.",
+                 be the low and high evict and high block watermarks for the cache. When the cache \
+                 exceeds the high evict watermark, entries will be evicted until the size reaches \
+                 the low watermark. When the cache exceeds the high block evict watermark, new \
+                 stores will be blocked until the size reaches the low watermark.",
             )
             .hidden(hidden_unless_forced()),
     )

@@ -63,7 +63,8 @@ fn bench_read_only_accounts_cache(c: &mut Criterion) {
     for num_readers_writers in NUM_READERS_WRITERS {
         let cache = Arc::new(ReadOnlyAccountsCache::new(
             AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
-            AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
+            AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI_EVICT,
+            AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI_BLOCK,
             AccountsDb::DEFAULT_READ_ONLY_CACHE_EVICT_SAMPLE_SIZE,
         ));
 
@@ -170,7 +171,7 @@ fn bench_read_only_accounts_cache_eviction(
         255,
         DATA_SIZES,
         WEIGHTS,
-        AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI * 2,
+        AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI_EVICT * 2,
     )
     .collect();
     let pubkeys: Vec<_> = accounts
@@ -183,6 +184,7 @@ fn bench_read_only_accounts_cache_eviction(
     for num_readers_writers in NUM_READERS_WRITERS {
         let cache = Arc::new(ReadOnlyAccountsCache::new(
             max_data_size_lo,
+            max_data_size_hi,
             max_data_size_hi,
             AccountsDb::DEFAULT_READ_ONLY_CACHE_EVICT_SAMPLE_SIZE,
         ));
@@ -303,7 +305,7 @@ fn bench_read_only_accounts_cache_eviction_lo_hi(c: &mut Criterion) {
         c,
         "read_only_accounts_cache_eviction_lo_hi",
         AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
-        AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
+        AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI_EVICT,
     )
 }
 
@@ -316,8 +318,8 @@ fn bench_read_only_accounts_cache_eviction_hi(c: &mut Criterion) {
     bench_read_only_accounts_cache_eviction(
         c,
         "read_only_accounts_cache_eviction_hi",
-        AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
-        AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
+        AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI_EVICT,
+        AccountsDb::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI_EVICT,
     )
 }
 
