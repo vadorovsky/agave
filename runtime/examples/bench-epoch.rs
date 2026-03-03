@@ -65,8 +65,10 @@ fn create_stake_account(vote_pubkey: &Pubkey, rent_exempt_reserve: u64) -> Accou
     Account::from(account)
 }
 
-fn populate_vote_accounts(bank: &Bank, vote_pubkeys: Vec<Pubkey>) {
-    for vote_pubkey in vote_pubkeys.into_iter() {
+fn populate_vote_accounts(bank: &Bank, validators: &[ValidatorVoteKeypairs]) {
+    for validator in validators.iter() {
+        let vote_pubkey = validator.vote_keypair.pubkey();
+
         let mut vote_account = bank.get_account(&vote_pubkey).unwrap();
 
         let mut vote_state = VoteStateV4::deserialize(vote_account.data(), &vote_pubkey).unwrap();
@@ -91,20 +93,16 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> Arc<Bank> {
         mut genesis_config, ..
     } = create_genesis_config_with_vote_accounts(
         GENESIS_MINT_LAMPORTS,
-        &validators.iter().collect::<Vec<_>>(),
+        &validators,
         vec![VALIDATOR_STAKE_LAMPORTS; vote_accounts],
     );
-
-    let vote_pubkeys = validators
-        .iter()
-        .map(|v| v.vote_keypair.pubkey())
-        .collect::<Vec<_>>();
 
     let stakes_per_vote = stake_accounts / vote_accounts;
     let stake_rent_exempt_reserve = genesis_config.rent.minimum_balance(StakeStateV2::size_of());
 
-    for vote_pubkey in vote_pubkeys.iter() {
-        let stake_account = create_stake_account(vote_pubkey, stake_rent_exempt_reserve);
+    for validator in validators.iter() {
+        let stake_account =
+            create_stake_account(&validator.vote_keypair.pubkey(), stake_rent_exempt_reserve);
 
         for _ in 0..stakes_per_vote {
             let stake_pubkey = Pubkey::new_unique();
@@ -116,7 +114,7 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> Arc<Bank> {
 
     let initial_bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
-    populate_vote_accounts(&initial_bank, vote_pubkeys);
+    populate_vote_accounts(&initial_bank, &validators);
 
     let last_slot_in_epoch = initial_bank.get_slots_in_epoch(0).checked_sub(1).unwrap();
 
