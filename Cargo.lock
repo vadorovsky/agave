@@ -10156,6 +10156,7 @@ dependencies = [
  "blake3",
  "bv",
  "bytemuck",
+ "clap 2.33.3",
  "criterion",
  "crossbeam-channel",
  "dashmap",

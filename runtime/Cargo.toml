@@ -197,6 +197,7 @@ wincode = { workspace = true }
 agave-logger = { workspace = true }
 agave-transaction-view = { workspace = true }
 bitvec = { workspace = true }
+clap = { workspace = true }
 criterion = { workspace = true }
 libsecp256k1 = { workspace = true }
 memoffset = { workspace = true }
@@ -225,12 +226,12 @@ test-case = { workspace = true }
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
 jemallocator = { workspace = true }
 
-[[bench]]
-name = "prioritization_fee_cache"
+[[example]]
+name = "bench-epoch"
+required-features = ["agave-unstable-api", "dev-context-only-utils"]
 
 [[bench]]
-name = "epoch_turnover"
-harness = false
+name = "prioritization_fee_cache"
 
 [lints]
 workspace = true
