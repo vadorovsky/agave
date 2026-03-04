@@ -1177,16 +1177,26 @@ impl Bank {
         #[allow(unused)] genesis_hash: Option<Hash>,
         #[allow(unused)] feature_set: Option<FeatureSet>,
     ) -> Self {
+        let accounts_db_now = Instant::now();
         let accounts_db =
             AccountsDb::new_with_config(paths, accounts_db_config, accounts_update_notifier, exit);
+        println!("AccountsDB setup: {:?}", accounts_db_now.elapsed());
+        let accounts_now = Instant::now();
         let accounts = Accounts::new(Arc::new(accounts_db));
+        println!("Accounts setup: {:?}", accounts_now.elapsed());
+        let bank_now = Instant::now();
         let mut bank = Self::default_with_accounts(accounts);
+        println!("Bank setup: {:?}", bank_now.elapsed());
+        let ancestors_now = Instant::now();
         bank.ancestors = Ancestors::from(vec![bank.slot()]);
+        println!("Ancestors setup: {:?}", ancestors_now.elapsed());
+        let compute_budget_now = Instant::now();
         bank.compute_budget = runtime_config.compute_budget;
         if let Some(compute_budget) = &bank.compute_budget {
             bank.transaction_processor
                 .set_execution_cost(compute_budget.to_cost());
         }
+        println!("Compute budget: {:?}", compute_budget_now.elapsed());
         bank.transaction_account_lock_limit = runtime_config.transaction_account_lock_limit;
         bank.transaction_debug_keys = debug_keys;
         bank.cluster_type = Some(genesis_config.cluster_type);
@@ -1196,16 +1206,24 @@ impl Bank {
             bank.feature_set = Arc::new(feature_set.unwrap_or_default());
         }
 
+        let genesis_config_now = Instant::now();
         #[cfg(not(feature = "dev-context-only-utils"))]
         bank.process_genesis_config(genesis_config);
         #[cfg(feature = "dev-context-only-utils")]
         bank.process_genesis_config(genesis_config, leader_id_for_tests, genesis_hash);
+        println!("Genesis config: {:?}", genesis_config_now.elapsed());
 
+        let genesis_features_now = Instant::now();
         bank.compute_and_apply_genesis_features();
+        println!(
+            "Genesis features setup: {:?}",
+            genesis_features_now.elapsed()
+        );
 
         // genesis needs stakes for all epochs up to the epoch implied by
         //  slot = 0 and genesis configuration
         {
+            let epoch_stakes_now = Instant::now();
             let stakes = bank.get_top_epoch_stakes();
             let stakes = SerdeStakesToStakeFormat::from(stakes);
             for epoch in 0..=bank.get_leader_schedule_epoch(bank.slot) {
@@ -1213,7 +1231,9 @@ impl Bank {
                     .insert(epoch, VersionedEpochStakes::new(stakes.clone(), epoch));
             }
             bank.update_stake_history(None);
+            println!("Epoch stakes setup: {:?}", epoch_stakes_now.elapsed());
         }
+        let updatez = Instant::now();
         bank.update_clock(None);
         bank.update_rent();
         bank.update_epoch_schedule();
@@ -1221,6 +1241,7 @@ impl Bank {
         bank.update_last_restart_slot();
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
+        println!("Remaining bank updates: {:?}", updatez.elapsed());
         bank
     }
 
@@ -2754,19 +2775,39 @@ impl Bank {
         #[cfg(feature = "dev-context-only-utils")] genesis_hash: Option<Hash>,
     ) {
         // Bootstrap validator collects fees until `new_from_parent` is called.
+        let fee_rate_governor_now = Instant::now();
         self.fee_rate_governor = genesis_config.fee_rate_governor.clone();
+        println!("Fee rate governor: {:?}", fee_rate_governor_now.elapsed());
 
+        let accounts_store_now = Instant::now();
+        let mut create_account_dur_all = Duration::default();
+        let mut store_account_dur_all = Duration::default();
         for (pubkey, account) in genesis_config.accounts.iter() {
             assert!(
                 self.get_account(pubkey).is_none(),
                 "{pubkey} repeated in genesis config"
             );
+            let create_account_now = Instant::now();
             let account_shared_data = create_account_shared_data(account);
+            let create_account_dur = create_account_now.elapsed();
+            println!("Creeate account (single): {:?}", create_account_dur);
+            create_account_dur_all += create_account_dur;
+            let store_account_now = Instant::now();
             self.store_account(pubkey, &account_shared_data);
+            let store_account_dur = store_account_now.elapsed();
+            println!("Store account (single): {:?}", store_account_dur);
+            store_account_dur_all += store_account_dur;
             self.capitalization.fetch_add(account.lamports(), Relaxed);
             self.accounts_data_size_initial += account.data().len() as u64;
         }
+        println!(
+            "Accounts store loop (all): {:?}",
+            accounts_store_now.elapsed()
+        );
+        println!("Create account (all): {:?}", create_account_dur_all);
+        println!("Store account (all): {:?}", store_account_dur_all);
 
+        let reward_pools_now = Instant::now();
         for (pubkey, account) in genesis_config.rewards_pools.iter() {
             assert!(
                 self.get_account(pubkey).is_none(),
@@ -2776,44 +2817,60 @@ impl Bank {
             self.store_account(pubkey, &account_shared_data);
             self.accounts_data_size_initial += account.data().len() as u64;
         }
+        println!("Reward pools: {:?}", reward_pools_now.elapsed());
 
         // After storing genesis accounts, the bank stakes cache will be warmed
         // up and can be used to set the leader id to the highest staked
         // node. If no staked nodes exist, allow fallback to an unstaked test
         // leader id during tests.
+        let leader_id_now = Instant::now();
         let leader_id = self.stakes_cache.stakes().highest_staked_node().copied();
+        println!("Leader ID: {:?}", leader_id_now.elapsed());
         #[cfg(feature = "dev-context-only-utils")]
         let leader_id = leader_id.or(leader_id_for_tests);
         self.leader_id =
             leader_id.expect("genesis processing failed because no staked nodes exist");
 
+        let genesis_hash_now = Instant::now();
         #[cfg(not(feature = "dev-context-only-utils"))]
         let genesis_hash = genesis_config.hash();
         #[cfg(feature = "dev-context-only-utils")]
         let genesis_hash = genesis_hash.unwrap_or(genesis_config.hash());
+        println!("Genesis hash: {:?}", genesis_hash_now.elapsed());
 
+        let blockhash_queue_now = Instant::now();
         self.blockhash_queue.write().unwrap().genesis_hash(
             &genesis_hash,
             genesis_config.fee_rate_governor.lamports_per_signature,
         );
+        println!("Blockhash queue: {:?}", blockhash_queue_now.elapsed());
 
+        let genesis_config_fields = Instant::now();
         self.hashes_per_tick = genesis_config.hashes_per_tick();
         self.ticks_per_slot = genesis_config.ticks_per_slot();
         self.ns_per_slot = genesis_config.ns_per_slot();
         self.genesis_creation_time = genesis_config.creation_time;
         self.max_tick_height = (self.slot + 1) * self.ticks_per_slot;
         self.slots_per_year = genesis_config.slots_per_year();
+        println!(
+            "Genesis config fields access: {:?}",
+            genesis_config_fields.elapsed()
+        );
 
+        let epoch_schedule_clone = Instant::now();
         self.epoch_schedule = genesis_config.epoch_schedule.clone();
+        println!("Epoch schedule clone: {:?}", epoch_schedule_clone.elapsed());
 
         self.inflation = Arc::new(RwLock::new(genesis_config.inflation));
 
+        let rent_collector_now = Instant::now();
         self.rent_collector = RentCollector::new(
             self.epoch,
             self.epoch_schedule().clone(),
             self.slots_per_year,
             genesis_config.rent.clone(),
         );
+        println!("Rent collector: {:?}", rent_collector_now.elapsed());
     }
 
     fn burn_and_purge_account(&self, program_id: &Pubkey, mut account: AccountSharedData) {

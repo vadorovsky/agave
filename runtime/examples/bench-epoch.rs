@@ -85,10 +85,13 @@ fn populate_vote_accounts(bank: &Bank, validators: &[ValidatorVoteKeypairs]) {
 }
 
 fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> Arc<Bank> {
+    let validators_now = Instant::now();
     let validators = (0..vote_accounts)
         .map(|_| ValidatorVoteKeypairs::new_rand())
         .collect::<Vec<_>>();
+    println!("Validators setup: {:?}", validators_now.elapsed());
 
+    let genesis_now = Instant::now();
     let GenesisConfigInfo {
         mut genesis_config, ..
     } = create_genesis_config_with_vote_accounts(
@@ -96,10 +99,12 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> Arc<Bank> {
         &validators,
         vec![VALIDATOR_STAKE_LAMPORTS; vote_accounts],
     );
+    println!("Genesis setup: {:?}", genesis_now.elapsed());
 
     let stakes_per_vote = stake_accounts / vote_accounts;
     let stake_rent_exempt_reserve = genesis_config.rent.minimum_balance(StakeStateV2::size_of());
 
+    let stakes_now = Instant::now();
     for validator in validators.iter() {
         let stake_account =
             create_stake_account(&validator.vote_keypair.pubkey(), stake_rent_exempt_reserve);
@@ -111,18 +116,29 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> Arc<Bank> {
                 .insert(stake_pubkey, stake_account.clone());
         }
     }
+    println!("Stakes setup: {:?}", stakes_now.elapsed());
 
+    let initial_bank_now = Instant::now();
     let initial_bank = Arc::new(Bank::new_for_tests(&genesis_config));
+    println!("Initial bank setup: {:?}", initial_bank_now.elapsed());
 
+    let populate_vote_accounts_now = Instant::now();
     populate_vote_accounts(&initial_bank, &validators);
+    println!(
+        "Vote accounts population: {:?}",
+        populate_vote_accounts_now.elapsed()
+    );
 
     let last_slot_in_epoch = initial_bank.get_slots_in_epoch(0).checked_sub(1).unwrap();
 
-    Arc::new(Bank::new_from_parent(
+    let advanced_bank_now = Instant::now();
+    let advanced_bank = Arc::new(Bank::new_from_parent(
         initial_bank,
         &Pubkey::default(),
         last_slot_in_epoch,
-    ))
+    ));
+    println!("Advancing bank: {:?}", advanced_bank_now.elapsed());
+    advanced_bank
 }
 
 fn bench_turnover(matches: &ArgMatches<'_>) {
