@@ -1765,7 +1765,6 @@ fn test_interleaving_locks() {
     let commit_results = bank
         .load_execute_and_commit_transactions(
             &lock_result,
-            MAX_PROCESSING_AGE,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
@@ -1846,7 +1845,6 @@ fn test_load_and_execute_commit_transactions_fees_only() {
     let commit_results = bank
         .load_execute_and_commit_transactions(
             &batch,
-            MAX_PROCESSING_AGE,
             ExecutionRecordingConfig::new_single_setting(true),
             &mut ExecuteTimings::default(),
             None,
@@ -1912,7 +1910,6 @@ fn test_load_and_execute_commit_transactions_failure() {
     let commit_results = bank
         .load_execute_and_commit_transactions(
             &batch,
-            MAX_PROCESSING_AGE,
             ExecutionRecordingConfig::new_single_setting(true),
             &mut ExecuteTimings::default(),
             None,
@@ -1986,7 +1983,6 @@ fn test_load_and_execute_commit_transactions_success() {
     let commit_results = bank
         .load_execute_and_commit_transactions(
             &batch,
-            MAX_PROCESSING_AGE,
             ExecutionRecordingConfig::new_single_setting(true),
             &mut ExecuteTimings::default(),
             None,
@@ -4639,7 +4635,6 @@ fn test_pre_post_transaction_balances() {
     let lock_result = bank0.prepare_batch_for_tests(txs);
     let (commit_results, balance_collector) = bank0.load_execute_and_commit_transactions(
         &lock_result,
-        MAX_PROCESSING_AGE,
         ExecutionRecordingConfig {
             enable_cpi_recording: false,
             enable_log_recording: false,
@@ -8202,7 +8197,6 @@ fn test_tx_log_order(relax_intrabatch_account_locks: bool) {
     let commit_results = bank
         .load_execute_and_commit_transactions(
             &batch,
-            MAX_PROCESSING_AGE,
             ExecutionRecordingConfig {
                 enable_cpi_recording: false,
                 enable_log_recording: true,
@@ -8318,7 +8312,6 @@ fn test_tx_return_data() {
         let commit_results = bank
             .load_execute_and_commit_transactions(
                 &batch,
-                MAX_PROCESSING_AGE,
                 ExecutionRecordingConfig {
                     enable_cpi_recording: false,
                     enable_log_recording: false,
@@ -12283,7 +12276,6 @@ fn test_temporary_account_execute_and_commit() {
 
     let (commit_results, _) = bank.load_execute_and_commit_transactions(
         &batch,
-        MAX_PROCESSING_AGE,
         ExecutionRecordingConfig::default(),
         &mut ExecuteTimings::default(),
         None,
@@ -12372,7 +12364,6 @@ fn test_temporary_account_recreated_execute_and_commit() {
 
     let (commit_results, _) = bank.load_execute_and_commit_transactions(
         &batch,
-        MAX_PROCESSING_AGE,
         ExecutionRecordingConfig::default(),
         &mut ExecuteTimings::default(),
         None,
