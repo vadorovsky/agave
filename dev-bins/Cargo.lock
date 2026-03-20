@@ -7574,6 +7574,7 @@ version = "4.1.0-alpha.0"
 dependencies = [
  "agave-random",
  "itertools 0.14.0",
+ "qualifier_attr",
  "rand_chacha 0.9.0",
  "solana-clock",
  "solana-pubkey 4.1.0",

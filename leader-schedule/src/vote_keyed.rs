@@ -1,3 +1,5 @@
+#[cfg(any(feature = "dev-context-only-utils", test))]
+use qualifier_attr::qualifiers;
 use {
     super::{SlotLeader, stake_weighted_slot_leaders},
     itertools::Itertools,
@@ -39,7 +41,8 @@ impl LeaderSchedule {
         Self::new_from_schedule(slot_leaders)
     }
 
-    pub fn new_from_schedule(slot_leaders: Vec<SlotLeader>) -> Self {
+    #[cfg_attr(any(feature = "dev-context-only-utils", test), qualifiers(pub))]
+    fn new_from_schedule(slot_leaders: Vec<SlotLeader>) -> Self {
         let leader_slots_map = Self::invert_slot_leaders(&slot_leaders);
         Self {
             slot_leaders,

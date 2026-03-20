@@ -18,10 +18,12 @@ name = "solana_leader_schedule"
 
 [features]
 agave-unstable-api = []
+dev-context-only-utils = ["dep:qualifier_attr"]
 
 [dependencies]
 agave-random = { workspace = true }
 itertools = { workspace = true }
+qualifier_attr = { workspace = true, optional = true }
 rand_chacha = { workspace = true }
 solana-clock = { workspace = true }
 solana-pubkey = { workspace = true }
@@ -31,6 +33,8 @@ solana-vote = { workspace = true }
 bs58 = { workspace = true, features = ["alloc"] }
 rand = { workspace = true }
 sha2 = { workspace = true }
+# See order-crates-for-publishing.py for using this unusual `path = "."`
+solana-leader-schedule = { path = ".", features = ["dev-context-only-utils", "agave-unstable-api"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-vote = { path = "../vote", features = ["agave-unstable-api", "dev-context-only-utils"] }
 test-case = { workspace = true }
