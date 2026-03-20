@@ -8621,6 +8621,7 @@ dependencies = [
  "solana-sha256-hasher",
  "solana-signature",
  "solana-signer",
+ "solana-signer-store",
  "solana-slot-hashes",
  "solana-slot-history",
  "solana-stake-interface",
