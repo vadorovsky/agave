@@ -836,10 +836,6 @@ impl ColumnName for columns::SlotMeta {
 }
 impl TypedColumn for columns::SlotMeta {
     type Type = blockstore_meta::SlotMeta;
-
-    fn deserialize(data: &[u8]) -> Result<Self::Type> {
-        deserialize_fixint_reject_trailing(data)
-    }
 }
 
 impl Column for columns::AlternateSlotMeta {
@@ -874,10 +870,6 @@ impl ColumnName for columns::AlternateSlotMeta {
 }
 impl TypedColumn for columns::AlternateSlotMeta {
     type Type = <columns::SlotMeta as TypedColumn>::Type;
-
-    fn deserialize(data: &[u8]) -> Result<Self::Type> {
-        <columns::SlotMeta as TypedColumn>::deserialize(data)
-    }
 }
 
 impl Column for columns::ErasureMeta {
@@ -992,4 +984,66 @@ impl ColumnName for columns::AlternateMerkleRootMeta {
 }
 impl TypedColumn for columns::AlternateMerkleRootMeta {
     type Type = blockstore_meta::MerkleRootMeta;
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::blockstore_meta::{ConnectedFlags, SlotMetaV3},
+        solana_hash::Hash,
+    };
+
+    #[test]
+    fn test_slot_meta_column_roundtrip() {
+        let meta = blockstore_meta::SlotMeta {
+            slot: 42,
+            consumed: 10,
+            received: 15,
+            first_shred_timestamp: 1234567890,
+            last_index: Some(14),
+            parent_slot: Some(41),
+            next_slots: vec![43, 44],
+            connected_flags: ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED,
+            completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
+        };
+
+        let bytes = <columns::SlotMeta as TypedColumn>::serialize(&meta).unwrap();
+        let deserialized = <columns::SlotMeta as TypedColumn>::deserialize(&bytes).unwrap();
+        assert_eq!(meta, deserialized);
+    }
+
+    #[test]
+    fn test_slot_meta_column_deserialize_v2_from_v3_bytes() {
+        use bincode::Options;
+
+        let meta_v3 = SlotMetaV3 {
+            slot: 42,
+            consumed: 10,
+            received: 15,
+            first_shred_timestamp: 1234567890,
+            last_index: Some(14),
+            parent_slot: Some(41),
+            next_slots: vec![43, 44],
+            connected_flags: ConnectedFlags::CONNECTED | ConnectedFlags::PARENT_CONNECTED,
+            completed_data_indexes: [0u32, 5, 10].into_iter().collect(),
+            parent_block_id: Hash::new_unique(),
+            replay_fec_set_index: 7,
+        };
+        let v3_bytes = bincode::serialize(&meta_v3).unwrap();
+
+        let expected = blockstore_meta::SlotMeta::from(meta_v3);
+
+        let config = bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .reject_trailing_bytes();
+        assert!(
+            config
+                .deserialize::<blockstore_meta::SlotMeta>(&v3_bytes)
+                .is_err()
+        );
+
+        let deserialized = <columns::SlotMeta as TypedColumn>::deserialize(&v3_bytes).unwrap();
+        assert_eq!(expected, deserialized);
+    }
 }
