@@ -56,6 +56,7 @@ use {
         leader_schedule_utils::leader_schedule_from_vote_accounts,
         rent_collector::RentCollector,
         reward_info::RewardInfo,
+        rewards_cache::RewardsCache,
         runtime_config::RuntimeConfig,
         stake_account::StakeAccount,
         stake_history::StakeHistory as CowStakeHistory,
@@ -575,6 +576,7 @@ impl PartialEq for Bank {
             epoch_schedule,
             inflation,
             stakes_cache,
+            rewards_cache: _,
             epoch_stakes,
             is_delta,
             #[cfg(feature = "dev-context-only-utils")]
@@ -638,6 +640,7 @@ impl PartialEq for Bank {
             && epoch_schedule == &other.epoch_schedule
             && *inflation.read().unwrap() == *other.inflation.read().unwrap()
             && *stakes_cache.stakes() == *other.stakes_cache.stakes()
+            && self.rewards_cache.rewarded_epoch() == other.rewards_cache.rewarded_epoch()
             && epoch_stakes == &other.epoch_stakes
             && is_delta.load(Relaxed) == other.is_delta.load(Relaxed)
             // No deadlock is possible, when Arc::ptr_eq() returns false, because of being
@@ -856,6 +859,7 @@ pub struct Bank {
 
     /// cache of vote_account and stake_account state for this fork
     stakes_cache: StakesCache,
+    rewards_cache: RewardsCache,
 
     /// staked nodes on epoch boundaries, saved off when a bank.slot() is at
     ///   a leader schedule calculation boundary
@@ -1125,6 +1129,7 @@ impl Bank {
             epoch_schedule: EpochSchedule::default(),
             inflation: Arc::<RwLock<Inflation>>::default(),
             stakes_cache: StakesCache::default(),
+            rewards_cache: RewardsCache::default(),
             epoch_stakes: HashMap::<Epoch, VersionedEpochStakes>::default(),
             is_delta: AtomicBool::default(),
             rewards: RwLock::<Vec<(Pubkey, RewardInfo)>>::default(),
@@ -1364,6 +1369,7 @@ impl Bank {
             transactions_per_entry_max: AtomicU64::new(0),
             // we will .clone_with_epoch() this soon after stake data update; so just .clone() for now
             stakes_cache,
+            rewards_cache: RewardsCache::new(parent.epoch()),
             epoch_stakes,
             parent_hash: parent.hash(),
             parent_slot: parent.slot(),
@@ -1976,6 +1982,7 @@ impl Bank {
             epoch_schedule: fields.epoch_schedule,
             inflation: Arc::new(RwLock::new(fields.inflation)),
             stakes_cache: StakesCache::new(stakes),
+            rewards_cache: RewardsCache::default(),
             epoch_stakes,
             is_delta: AtomicBool::new(fields.is_delta),
             rewards: RwLock::new(vec![]),
@@ -4345,7 +4352,15 @@ impl Bank {
                     account.pubkey(),
                     &account,
                     new_warmup_cooldown_rate_epoch,
-                )
+                );
+                let stakes = self.stakes_cache.stakes();
+                self.rewards_cache.check_and_store(
+                    account.pubkey(),
+                    &account,
+                    &stakes,
+                    self.epoch(),
+                    new_warmup_cooldown_rate_epoch,
+                );
             })
         });
         self.update_bank_hash_stats(&accounts);
@@ -5282,6 +5297,14 @@ impl Bank {
                 //  but this code path is captured separately in ExecuteTimingType::UpdateStakesCacheUs
                 self.stakes_cache
                     .check_and_store(pubkey, account, new_warmup_cooldown_rate_epoch);
+                let stakes = self.stakes_cache.stakes();
+                self.rewards_cache.check_and_store(
+                    pubkey,
+                    account,
+                    &stakes,
+                    self.epoch(),
+                    new_warmup_cooldown_rate_epoch,
+                );
             });
     }
 

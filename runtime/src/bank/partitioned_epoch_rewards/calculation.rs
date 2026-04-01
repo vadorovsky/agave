@@ -15,6 +15,7 @@ use {
             points::{DelegatedVoteState, PointValue, calculate_points},
             redeem_rewards,
         },
+        rewards_cache::RewardsCache,
         stake_account::StakeAccount,
         stake_utils,
         stakes::Stakes,
@@ -647,11 +648,12 @@ impl Bank {
 
         let solana_vote_program: Pubkey = solana_vote_program::id();
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
+        let rebuilt_rewards_cache = RewardsCache::new(self.epoch());
         let (points, measure_us) = measure_us!(thread_pool.install(|| {
             stake_delegations
                 .par_iter()
                 .filter_map(|stake_delegation| stake_delegation)
-                .map(|(_stake_pubkey, stake_account)| {
+                .map(|(stake_pubkey, stake_account)| {
                     let vote_pubkey = stake_account.delegation().voter_pubkey;
 
                     let Some(vote_account) = distribution_epoch_vote_accounts.get(&vote_pubkey)
@@ -662,17 +664,35 @@ impl Bank {
                         return 0;
                     }
 
-                    calculate_points(
+                    let points = calculate_points(
                         stake_account.stake_state(),
                         DelegatedVoteState::from(vote_account.vote_state_view()),
                         stake_history,
                         new_warmup_cooldown_rate_epoch,
                     )
-                    .unwrap_or(0)
+                    .unwrap_or(0);
+                    rebuilt_rewards_cache.upsert_stake_delegation_points(
+                        *stake_pubkey,
+                        vote_pubkey,
+                        points,
+                    );
+                    points
                 })
                 .sum::<u128>()
         }));
         metrics.calculate_points_us.fetch_add(measure_us, Relaxed);
+        let cached_points = rebuilt_rewards_cache.sum_points_for_stake_pubkeys(
+            stake_delegations
+                .par_iter()
+                .filter_map(|stake_delegation| {
+                    stake_delegation.map(|(stake_pubkey, _)| stake_pubkey)
+                })
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            cached_points, points,
+            "rewards cache points mismatch: cached={cached_points}, recomputed={points}"
+        );
 
         (points > 0).then_some(PointValue { rewards, points })
     }
