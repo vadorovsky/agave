@@ -29,16 +29,35 @@ use {
     },
 };
 
+include!("epoch_turnover_mainnet.rs");
+
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 #[global_allocator]
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
-const VOTE_ACCOUNTS: [usize; 2] = [10, 1_000];
+const VOTE_ACCOUNTS: [usize; 2] = [10, STAKEWIZ_MAINNET_LIKE_VALIDATOR_COUNT];
 const STAKE_ACCOUNTS: [usize; 2] = [1_000, 1_000_000];
+const DISTRIBUTION_MODES: [DistributionMode; 2] =
+    [DistributionMode::Uniform, DistributionMode::MainnetLike];
 const DELEGATED_STAKE_LAMPORTS: u64 = 1_000 * LAMPORTS_PER_SOL;
 const VALIDATOR_STAKE_LAMPORTS: u64 = 1_000 * LAMPORTS_PER_SOL;
 const GENESIS_MINT_LAMPORTS: u64 = 1_000_000 * LAMPORTS_PER_SOL;
 const SYNTHETIC_VOTE_SLOTS: u64 = (MAX_LOCKOUT_HISTORY as u64) + 42;
+
+#[derive(Clone, Copy, Debug)]
+enum DistributionMode {
+    Uniform,
+    MainnetLike,
+}
+
+impl DistributionMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Uniform => "uniform",
+            Self::MainnetLike => "mainnet_like",
+        }
+    }
+}
 
 fn create_stake_account(vote_pubkey: &Pubkey, rent_exempt_reserve: u64) -> Account {
     let total_lamports = rent_exempt_reserve + DELEGATED_STAKE_LAMPORTS;
@@ -87,7 +106,69 @@ fn populate_vote_accounts(bank: &Bank, vote_pubkeys: Vec<Pubkey>) {
     }
 }
 
-fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
+fn mainnet_like_weights(vote_accounts: usize) -> &'static [u64] {
+    assert!(
+        vote_accounts <= STAKEWIZ_MAINNET_LIKE_ACTIVATED_STAKE_LAMPORTS.len(),
+        "mainnet-like snapshot only includes {} validators",
+        STAKEWIZ_MAINNET_LIKE_ACTIVATED_STAKE_LAMPORTS.len(),
+    );
+    &STAKEWIZ_MAINNET_LIKE_ACTIVATED_STAKE_LAMPORTS[..vote_accounts]
+}
+
+fn stake_accounts_per_vote(
+    mode: DistributionMode,
+    vote_accounts: usize,
+    stake_accounts: usize,
+) -> Vec<usize> {
+    match mode {
+        DistributionMode::Uniform => {
+            let base = stake_accounts / vote_accounts;
+            let extra = stake_accounts % vote_accounts;
+            (0..vote_accounts)
+                .map(|index| base + usize::from(index < extra))
+                .collect()
+        }
+        DistributionMode::MainnetLike => {
+            let weights = mainnet_like_weights(vote_accounts);
+            let total_weight = weights.iter().map(|weight| *weight as u128).sum::<u128>();
+            let mut counts = Vec::with_capacity(vote_accounts);
+            let mut remainders = Vec::with_capacity(vote_accounts);
+            let mut assigned_stake_accounts = 0usize;
+
+            for (index, weight) in weights.iter().copied().enumerate() {
+                let weighted_stake_accounts = (stake_accounts as u128) * (weight as u128);
+                let assigned = (weighted_stake_accounts / total_weight) as usize;
+                let remainder = weighted_stake_accounts % total_weight;
+                assigned_stake_accounts += assigned;
+                counts.push(assigned);
+                remainders.push((remainder, index));
+            }
+
+            remainders.sort_unstable_by(
+                |(left_remainder, left_index), (right_remainder, right_index)| {
+                    right_remainder
+                        .cmp(left_remainder)
+                        .then_with(|| left_index.cmp(right_index))
+                },
+            );
+
+            for (_, index) in remainders
+                .into_iter()
+                .take(stake_accounts - assigned_stake_accounts)
+            {
+                counts[index] += 1;
+            }
+
+            counts
+        }
+    }
+}
+
+fn setup_bank(
+    distribution_mode: DistributionMode,
+    vote_accounts: usize,
+    stake_accounts: usize,
+) -> (Arc<Bank>, Arc<RwLock<BankForks>>) {
     let validators = (0..vote_accounts)
         .map(|_| ValidatorVoteKeypairs::new_rand())
         .collect::<Vec<_>>();
@@ -105,13 +186,16 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<Rw
         .map(|v| v.vote_keypair.pubkey())
         .collect::<Vec<_>>();
 
-    let stakes_per_vote = stake_accounts / vote_accounts;
+    let stake_accounts_per_vote =
+        stake_accounts_per_vote(distribution_mode, vote_accounts, stake_accounts);
     let stake_rent_exempt_reserve = genesis_config.rent.minimum_balance(StakeStateV2::size_of());
 
-    for vote_pubkey in vote_pubkeys.iter() {
+    for (vote_pubkey, stake_accounts_for_vote) in
+        vote_pubkeys.iter().zip(stake_accounts_per_vote.into_iter())
+    {
         let stake_account = create_stake_account(vote_pubkey, stake_rent_exempt_reserve);
 
-        for _ in 0..stakes_per_vote {
+        for _ in 0..stake_accounts_for_vote {
             let stake_pubkey = Pubkey::new_unique();
             genesis_config
                 .accounts
@@ -140,10 +224,16 @@ fn setup_bank(vote_accounts: usize, stake_accounts: usize) -> (Arc<Bank>, Arc<Rw
 fn bench_epoch_turnover(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_epoch_turnover");
 
-    for (vote_accounts, stake_accounts) in iproduct!(VOTE_ACCOUNTS, STAKE_ACCOUNTS) {
-        let name = format!("{vote_accounts}_votes_{stake_accounts}_stakes");
+    for (distribution_mode, vote_accounts, stake_accounts) in
+        iproduct!(DISTRIBUTION_MODES, VOTE_ACCOUNTS, STAKE_ACCOUNTS)
+    {
+        let name = format!(
+            "{}_{vote_accounts}_votes_{stake_accounts}_stakes",
+            distribution_mode.as_str()
+        );
 
-        let (initial_bank, bank_forks) = setup_bank(vote_accounts, stake_accounts);
+        let (initial_bank, bank_forks) =
+            setup_bank(distribution_mode, vote_accounts, stake_accounts);
         let first_epoch_slot = initial_bank.slot() + 1;
 
         group.bench_function(name.as_str(), move |b| {
@@ -165,10 +255,16 @@ fn bench_epoch_turnover(c: &mut Criterion) {
 fn bench_epoch_rewards_period(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_epoch_rewards_period");
 
-    for (vote_accounts, stake_accounts) in iproduct!(VOTE_ACCOUNTS, STAKE_ACCOUNTS) {
-        let name = format!("{vote_accounts}_votes_{stake_accounts}_stakes");
+    for (distribution_mode, vote_accounts, stake_accounts) in
+        iproduct!(DISTRIBUTION_MODES, VOTE_ACCOUNTS, STAKE_ACCOUNTS)
+    {
+        let name = format!(
+            "{}_{vote_accounts}_votes_{stake_accounts}_stakes",
+            distribution_mode.as_str()
+        );
 
-        let (initial_bank, bank_forks) = setup_bank(vote_accounts, stake_accounts);
+        let (initial_bank, bank_forks) =
+            setup_bank(distribution_mode, vote_accounts, stake_accounts);
         let first_epoch_slot = initial_bank.slot() + 1;
 
         let bank = Arc::new(Bank::new_from_parent(
