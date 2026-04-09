@@ -28,6 +28,20 @@ enum Commands {
     Publish(xtask_shared::commands::publish::CommandArgs),
     #[command(about = "Generate Buildkite pipeline")]
     GeneratePipeline(commands::generate_pipeline::CommandArgs),
+    #[command(about = "Generate benchmark fixture files")]
+    GenerateBenchmarkFixtures(GenerateBenchmarkFixturesArgs),
+}
+
+#[derive(Args)]
+struct GenerateBenchmarkFixturesArgs {
+    #[command(subcommand)]
+    command: GenerateBenchmarkFixturesCommands,
+}
+
+#[derive(Subcommand)]
+enum GenerateBenchmarkFixturesCommands {
+    #[command(about = "Generate the epoch turnover mainnet snapshot")]
+    EpochTurnoverMainnet(commands::generate_epoch_turnover_mainnet::CommandArgs),
 }
 
 #[derive(Args, Debug)]
@@ -77,6 +91,12 @@ async fn try_main(xtask: Xtask) -> Result<()> {
         }
         Commands::GeneratePipeline(args) => {
             commands::generate_pipeline::run(args).await?;
+        }
+        Commands::GenerateBenchmarkFixtures(args) => match args.command {
+            GenerateBenchmarkFixturesCommands::EpochTurnoverMainnet(args) => {
+                tokio::task::spawn_blocking(move || commands::generate_epoch_turnover_mainnet::run(args))
+                    .await??;
+            }
         }
     }
 
