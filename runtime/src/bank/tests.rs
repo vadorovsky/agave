@@ -636,7 +636,11 @@ impl Bank {
         reward_calc_tracer: Option<impl RewardCalcTracer>,
     ) -> StakeDelegationsMap {
         let stakes = self.stakes_cache.stakes();
-        let stake_delegations = stakes.stake_delegations_vec();
+        let stake_delegations = stakes
+            .stake_delegations()
+            .iter()
+            .map(|(pubkey, stake_account)| (*pubkey, stake_account.clone()))
+            .collect::<Vec<_>>();
         let stake_delegations = self.filter_stake_delegations(stake_delegations);
         // Obtain all unique voter pubkeys from stake delegations.
         fn merge(mut acc: HashSet<Pubkey>, other: HashSet<Pubkey>) -> HashSet<Pubkey> {
@@ -736,7 +740,7 @@ where
     agave_logger::setup();
 
     // create a bank that ticks really slowly...
-    let bank0 = Bank::new_for_tests(&GenesisConfig {
+    let bank0 = Bank::new_for_indexed_epoch_boundary_tests(&GenesisConfig {
         accounts: (0..42)
             .map(|_| {
                 (
@@ -880,7 +884,7 @@ where
 
 fn do_test_bank_update_rewards_determinism() -> u64 {
     // create a bank that ticks really slowly...
-    let (bank, _bank_forks) = Bank::new_for_tests(&GenesisConfig {
+    let (bank, _bank_forks) = Bank::new_for_indexed_epoch_boundary_tests(&GenesisConfig {
         accounts: (0..42)
             .map(|_| {
                 (
@@ -3114,8 +3118,8 @@ fn test_bank_inherit_fee_rate_governor() {
         .fee_rate_governor
         .target_lamports_per_signature = 123;
 
-    let (bank0, _bank_forks) =
-        Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+    let (bank0, _bank_forks) = Bank::new_for_indexed_epoch_boundary_tests(&genesis_config)
+        .wrap_with_bank_forks_for_tests();
     let bank1 = Arc::new(new_from_parent(bank0.clone()));
     assert_eq!(
         bank0.fee_rate_governor.target_lamports_per_signature / 2,
@@ -3259,6 +3263,113 @@ fn test_bank_cloned_stake_delegations() {
     let stake_delegations = bank.stakes_cache.stakes().stake_delegations().clone();
     assert_eq!(stake_delegations.len(), 2);
     assert!(stake_delegations.get(&stake_keypair.pubkey()).is_some());
+}
+
+#[test]
+fn test_load_epoch_boundary_stake_delegations_from_index_match_cache() {
+    let GenesisConfigInfo {
+        mut genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config_with_leader(
+        123_456_000_000_000,
+        &solana_pubkey::new_rand(),
+        123_000_000_000,
+    );
+    genesis_config.rent = Rent::default();
+
+    for (pubkey, account) in
+        solana_program_binaries::by_id(&stake_program::id(), &genesis_config.rent)
+            .unwrap()
+            .into_iter()
+    {
+        genesis_config.add_account(pubkey, account);
+    }
+
+    let mut account_indexes = AccountSecondaryIndexes::default();
+    account_indexes.indexes.insert(AccountIndex::ProgramId);
+    let bank_config = BankTestConfig {
+        accounts_db_config: AccountsDbConfig {
+            account_indexes: Some(account_indexes),
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        },
+    };
+    let (bank, _bank_forks) =
+        Bank::new_with_config_for_tests(&genesis_config, bank_config).wrap_with_bank_forks_for_tests();
+    bank.squash();
+    let bank = Bank::new_from_parent(bank, SlotLeader::new_unique(), 1);
+
+    let (vote_balance, stake_balance) = {
+        let rent = &bank.rent_collector().rent;
+        let vote_rent_exempt_reserve = rent.minimum_balance(VoteStateV4::size_of());
+        let stake_rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
+        let minimum_delegation = stake_utils::get_minimum_delegation(
+            bank.feature_set.snapshot().upgrade_bpf_stake_program_to_v5,
+        );
+        (
+            vote_rent_exempt_reserve,
+            stake_rent_exempt_reserve + minimum_delegation,
+        )
+    };
+
+    let vote_keypair = Keypair::new();
+    let mut instructions = vote_instruction::create_account_with_config(
+        &mint_keypair.pubkey(),
+        &vote_keypair.pubkey(),
+        &VoteInit {
+            node_pubkey: mint_keypair.pubkey(),
+            authorized_voter: vote_keypair.pubkey(),
+            authorized_withdrawer: vote_keypair.pubkey(),
+            commission: 0,
+        },
+        vote_balance,
+        vote_instruction::CreateVoteAccountConfig {
+            space: VoteStateV4::size_of() as u64,
+            ..vote_instruction::CreateVoteAccountConfig::default()
+        },
+    );
+
+    let stake_keypair = Keypair::new();
+    instructions.extend(stake_instruction::create_account_and_delegate_stake(
+        &mint_keypair.pubkey(),
+        &stake_keypair.pubkey(),
+        &vote_keypair.pubkey(),
+        &Authorized::auto(&stake_keypair.pubkey()),
+        &Lockup::default(),
+        stake_balance,
+    ));
+
+    let message = Message::new(&instructions, Some(&mint_keypair.pubkey()));
+    let transaction = Transaction::new(
+        &[&mint_keypair, &vote_keypair, &stake_keypair],
+        message,
+        bank.last_blockhash(),
+    );
+
+    bank.process_transaction(&transaction).unwrap();
+
+    let rebuilt_stake_delegations = bank
+        .get_filtered_indexed_accounts(
+            &IndexKey::ProgramId(stake_program::id()),
+            |account| account.owner() == &stake_program::id(),
+            None,
+        )
+        .unwrap()
+        .into_iter()
+        .filter_map(|(pubkey, account)| {
+            StakeAccount::try_from(account)
+                .ok()
+                .map(|stake_account| (pubkey, stake_account))
+        })
+        .collect::<HashMap<_, _>>();
+    let cached_stakes = bank.stakes_cache.stakes();
+
+    let cached_stake_delegations = cached_stakes
+        .stake_delegations()
+        .iter()
+        .map(|(pubkey, stake_account)| (*pubkey, stake_account.clone()))
+        .collect::<HashMap<_, _>>();
+    assert_eq!(rebuilt_stake_delegations, cached_stake_delegations);
 }
 
 #[test]
@@ -3733,8 +3844,8 @@ fn test_blockhash_queue_sysvar_consistency() {
 #[test]
 fn test_hash_internal_state_unchanged() {
     let (genesis_config, _) = create_genesis_config(500);
-    let (bank0, _bank_forks) =
-        Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+    let (bank0, _bank_forks) = Bank::new_for_indexed_epoch_boundary_tests(&genesis_config)
+        .wrap_with_bank_forks_for_tests();
     bank0.freeze();
     let bank0_hash = bank0.hash();
     let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
@@ -11623,8 +11734,18 @@ fn test_bank_epoch_stakes() {
     let GenesisConfigInfo { genesis_config, .. } =
         create_genesis_config_with_vote_accounts(1_000_000_000, &voting_keypairs, stakes.clone());
 
-    let (bank0, _bank_forks) =
-        Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+    let (bank0, _bank_forks) = Bank::new_for_indexed_epoch_boundary_tests(&genesis_config)
+        .wrap_with_bank_forks_for_tests();
+    for keypair in &voting_keypairs {
+        let vote_pubkey = keypair.vote_keypair.pubkey();
+        let vote_account = bank0.get_account(&vote_pubkey).unwrap();
+        bank0.store_account_and_update_capitalization(&vote_pubkey, &vote_account);
+
+        let stake_pubkey = keypair.stake_keypair.pubkey();
+        let stake_account = bank0.get_account(&stake_pubkey).unwrap();
+        bank0.store_account_and_update_capitalization(&stake_pubkey, &stake_account);
+    }
+    add_root_and_flush_write_cache(&bank0);
     let mut bank1 = Bank::new_from_parent(
         bank0.clone(),
         SlotLeader::default(),

@@ -317,7 +317,7 @@ impl Stakes<StakeAccount> {
         next_epoch: Epoch,
         thread_pool: &ThreadPool,
         new_rate_activation_epoch: Option<Epoch>,
-        stake_delegations: &[(&Pubkey, &StakeAccount)],
+        stake_delegations: &[(Pubkey, StakeAccount)],
     ) -> (StakeHistory, VoteAccounts) {
         // Wrap up the prev epoch by adding new stake history entry for the
         // prev epoch.
@@ -465,20 +465,6 @@ impl Stakes<StakeAccount> {
 
     /// Collects stake delegations into a vector, which then can be used for
     /// parallel iteration with [`rayon`].
-    ///
-    /// # Performance
-    ///
-    /// The execution of this method takes ~200ms and it collects elements of
-    /// the [`imbl::HashMap`], which is a [hash array mapped trie (HAMT)][hamt],
-    /// so that operation involves a depth-first traversal with jumps. However,
-    /// it's still a reasonable tradeoff if the caller iterates over these
-    /// elements.
-    ///
-    /// [hamt]: https://en.wikipedia.org/wiki/Hash_array_mapped_trie
-    pub(crate) fn stake_delegations_vec(&self) -> Vec<(&Pubkey, &StakeAccount)> {
-        self.stake_delegations.iter().collect()
-    }
-
     pub(crate) fn highest_staked_node(&self) -> Option<SlotLeader> {
         let (vote_address, vote_account) = self.vote_accounts.find_max_by_delegated_stake()?;
         Some(SlotLeader {
@@ -552,7 +538,7 @@ fn refresh_vote_accounts(
     thread_pool: &ThreadPool,
     epoch: Epoch,
     vote_accounts: &VoteAccounts,
-    stake_delegations: &[(&Pubkey, &StakeAccount)],
+    stake_delegations: &[(Pubkey, StakeAccount)],
     stake_history: &StakeHistory,
     new_rate_activation_epoch: Option<Epoch>,
 ) -> VoteAccounts {
@@ -965,7 +951,11 @@ pub(crate) mod tests {
         let next_epoch = 3;
         let (stake_history, vote_accounts) = {
             let stakes = stakes_cache.stakes();
-            let stake_delegations = stakes.stake_delegations_vec();
+            let stake_delegations = stakes
+                .stake_delegations()
+                .iter()
+                .map(|(pubkey, stake_account)| (*pubkey, stake_account.clone()))
+                .collect::<Vec<_>>();
             stakes.calculate_activated_stake(next_epoch, &thread_pool, None, &stake_delegations)
         };
         stakes_cache.activate_epoch(next_epoch, stake_history, vote_accounts);

@@ -19,7 +19,7 @@ use {
     solana_pubkey::Pubkey,
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
-    std::{mem::MaybeUninit, sync::Arc},
+    std::{borrow::Cow, mem::MaybeUninit, sync::Arc},
 };
 
 /// Number of blocks for reward calculation and storing vote accounts.
@@ -243,18 +243,18 @@ impl Default for CalculateValidatorRewardsResult {
 }
 
 pub(super) struct FilteredStakeDelegations<'a> {
-    stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+    stake_delegations: Cow<'a, [(Pubkey, StakeAccount<Delegation>)]>,
     min_stake_delegation: Option<u64>,
 }
 
-impl<'a> FilteredStakeDelegations<'a> {
+impl FilteredStakeDelegations<'_> {
     pub(super) fn len(&self) -> usize {
         self.stake_delegations.len()
     }
 
     pub(super) fn par_iter(
-        &'a self,
-    ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount<Delegation>)>>
+        &self,
+    ) -> impl IndexedParallelIterator<Item = Option<(&Pubkey, &StakeAccount<Delegation>)>>
     {
         self.stake_delegations
             .par_iter()
@@ -271,10 +271,7 @@ impl<'a> FilteredStakeDelegations<'a> {
                     {
                         None
                     }
-                    _ => {
-                        // Dereference `&&` to `&`.
-                        Some((*pubkey, *stake_account))
-                    }
+                    _ => Some((pubkey, stake_account)),
                 }
             })
     }
@@ -426,6 +423,7 @@ mod tests {
         assert_matches::assert_matches,
         solana_account::{Account, state_traits::StateMut},
         solana_accounts_db::{
+            accounts_index::{AccountIndex, AccountSecondaryIndexes},
             accounts_db::{ACCOUNTS_DB_CONFIG_FOR_TESTING, AccountsDbConfig},
             partitioned_rewards::PartitionedEpochRewardsConfig,
         },
@@ -589,6 +587,9 @@ mod tests {
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
 
         let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING;
+        let mut account_indexes = AccountSecondaryIndexes::default();
+        account_indexes.indexes.insert(AccountIndex::ProgramId);
+        accounts_db_config.account_indexes = Some(account_indexes);
         accounts_db_config.partitioned_epoch_rewards_config =
             PartitionedEpochRewardsConfig::new_for_test(stake_account_stores_per_block);
 
@@ -699,6 +700,9 @@ mod tests {
 
         // Config stake reward distribution to be 10 per block
         let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING;
+        let mut account_indexes = AccountSecondaryIndexes::default();
+        account_indexes.indexes.insert(AccountIndex::ProgramId);
+        accounts_db_config.account_indexes = Some(account_indexes);
         accounts_db_config.partitioned_epoch_rewards_config =
             PartitionedEpochRewardsConfig::new_for_test(10);
 

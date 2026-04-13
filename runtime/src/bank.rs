@@ -93,7 +93,7 @@ use {
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
         accounts_db::{AccountsDb, AccountsDbConfig},
         accounts_hash::AccountsLtHash,
-        accounts_index::IndexKey,
+        accounts_index::{AccountIndex, IndexKey},
         accounts_scan::ScanResult,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::Ancestors,
@@ -144,7 +144,8 @@ use {
     solana_slot_hashes::SlotHashes,
     solana_slot_history::{Check, SlotHistory},
     solana_stake_interface::{
-        stake_history::StakeHistory, state::Delegation, sysvar::stake_history,
+        program as stake_program, stake_history::StakeHistory, state::Delegation,
+        sysvar::stake_history,
     },
     solana_svm::{
         account_loader::LoadedTransaction,
@@ -1688,10 +1689,24 @@ impl Bank {
         // Add new entry to stakes.stake_history, set appropriate epoch and
         // update vote accounts with warmed up stakes before saving a
         // snapshot of stakes in epoch stakes
-        let stakes = self.stakes_cache.stakes();
-        let stake_delegations = stakes.stake_delegations_vec();
+        let cached_stakes = self.stakes_cache.stakes();
+        let mut stake_delegations = self
+            .get_filtered_indexed_accounts(
+                &IndexKey::ProgramId(stake_program::id()),
+                |account| account.owner() == &stake_program::id(),
+                None,
+            )
+            .expect("indexed epoch-boundary stake lookup should succeed")
+            .into_iter()
+            .filter_map(|(pubkey, account)| {
+                StakeAccount::try_from(account)
+                    .ok()
+                    .map(|stake_account| (pubkey, stake_account))
+            })
+            .collect::<Vec<_>>();
+        stake_delegations.sort_unstable_by_key(|(pubkey, _stake_account)| *pubkey);
         let ((stake_history, vote_accounts), calculate_activated_stake_time_us) =
-            measure_us!(stakes.calculate_activated_stake(
+            measure_us!(cached_stakes.calculate_activated_stake(
                 self.epoch(),
                 thread_pool,
                 self.new_warmup_cooldown_rate_epoch(),
@@ -1707,7 +1722,7 @@ impl Bank {
         let (rewards_calculation, update_rewards_with_thread_pool_time_us) =
             measure_us!(self.calculate_rewards(
                 &stake_history,
-                stake_delegations,
+                &stake_delegations,
                 cached_vote_accounts,
                 rewarded_epoch,
                 reward_calc_tracer,
@@ -6264,6 +6279,22 @@ impl Bank {
 
     pub fn new_for_tests(genesis_config: &GenesisConfig) -> Self {
         Self::new_with_config_for_tests(genesis_config, BankTestConfig::default())
+    }
+
+    pub fn new_for_indexed_epoch_boundary_tests(genesis_config: &GenesisConfig) -> Self {
+        let mut account_indexes =
+            solana_accounts_db::accounts_index::AccountSecondaryIndexes::default();
+        account_indexes.indexes.insert(AccountIndex::ProgramId);
+        // Epoch-boundary stake loading uses the ProgramId secondary index in these tests.
+        Self::new_with_config_for_tests(
+            genesis_config,
+            BankTestConfig {
+                accounts_db_config: AccountsDbConfig {
+                    account_indexes: Some(account_indexes),
+                    ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+                },
+            },
+        )
     }
 
     pub fn new_with_mockup_builtin_for_tests(

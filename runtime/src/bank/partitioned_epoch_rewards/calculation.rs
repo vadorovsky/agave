@@ -30,7 +30,10 @@ use {
     solana_pubkey::Pubkey,
     solana_stake_interface::{stake_history::StakeHistory, state::Delegation},
     solana_sysvar::epoch_rewards::EpochRewards,
-    std::sync::{Arc, atomic::Ordering::Relaxed},
+    std::{
+        borrow::Cow,
+        sync::{Arc, atomic::Ordering::Relaxed},
+    },
 };
 
 #[derive(Debug)]
@@ -154,7 +157,7 @@ impl Bank {
     pub(in crate::bank) fn calculate_rewards(
         &self,
         stake_history: &StakeHistory,
-        stake_delegations: Vec<(&Pubkey, &StakeAccount<Delegation>)>,
+        stake_delegations: &[(Pubkey, StakeAccount<Delegation>)],
         cached_vote_accounts: CachedVoteAccounts<'_>,
         prev_epoch: Epoch,
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
@@ -287,7 +290,7 @@ impl Bank {
     pub(super) fn calculate_rewards_for_partitioning<'a>(
         &self,
         stake_history: &StakeHistory,
-        stake_delegations: &'a FilteredStakeDelegations<'a>,
+        stake_delegations: &'a FilteredStakeDelegations,
         cached_vote_accounts: CachedVoteAccounts<'_>,
         rewarded_epoch: Epoch,
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
@@ -332,7 +335,7 @@ impl Bank {
     fn calculate_validator_rewards<'a>(
         &self,
         stake_history: &StakeHistory,
-        stake_delegations: &'a FilteredStakeDelegations<'a>,
+        stake_delegations: &'a FilteredStakeDelegations,
         cached_vote_accounts: CachedVoteAccounts<'_>,
         rewarded_epoch: Epoch,
         rewards: u64,
@@ -370,7 +373,7 @@ impl Bank {
 
     pub(in crate::bank) fn filter_stake_delegations<'a>(
         &self,
-        stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+        stake_delegations: impl Into<Cow<'a, [(Pubkey, StakeAccount<Delegation>)]>>,
     ) -> FilteredStakeDelegations<'a> {
         let feature_snapshot = self.feature_set.snapshot();
         let min_stake_delegation = if feature_snapshot.stake_minimum_delegation_for_rewards {
@@ -383,7 +386,7 @@ impl Bank {
             None
         };
         FilteredStakeDelegations {
-            stake_delegations,
+            stake_delegations: stake_delegations.into(),
             min_stake_delegation,
         }
     }
@@ -397,7 +400,12 @@ impl Bank {
     ) -> EpochRewardCalculateParamInfo<'a> {
         // Use `stakes` for stake-related info
         let stake_history = stakes.history().clone();
-        let stake_delegations = stakes.stake_delegations_vec();
+        let mut stake_delegations = stakes
+            .stake_delegations()
+            .iter()
+            .map(|(pubkey, stake_account)| (*pubkey, stake_account.clone()))
+            .collect::<Vec<_>>();
+        stake_delegations.sort_unstable_by_key(|(pubkey, _stake_account)| *pubkey);
         let stake_delegations = self.filter_stake_delegations(stake_delegations);
 
         // Use the vote-account snapshot from epoch_stakes, which is VAT-filtered
@@ -524,7 +532,7 @@ impl Bank {
     fn calculate_stake_rewards_and_commissions<'a>(
         &self,
         stake_history: &StakeHistory,
-        stake_delegations: &'a FilteredStakeDelegations<'a>,
+        stake_delegations: &'a FilteredStakeDelegations,
         cached_vote_accounts: CachedVoteAccounts<'_>,
         rewarded_epoch: Epoch,
         point_value: PointValue,
@@ -639,7 +647,7 @@ impl Bank {
     fn calculate_reward_points_partitioned<'a>(
         &self,
         stake_history: &StakeHistory,
-        stake_delegations: &'a FilteredStakeDelegations<'a>,
+        stake_delegations: &'a FilteredStakeDelegations,
         cached_vote_accounts: &CachedVoteAccounts<'_>,
         rewards: u64,
         thread_pool: &ThreadPool,
@@ -817,7 +825,7 @@ mod tests {
     #[test]
     fn test_store_commission_accounts_partitioned() {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-        let bank = Bank::new_for_tests(&genesis_config);
+        let bank = Bank::new_for_indexed_epoch_boundary_tests(&genesis_config);
 
         let num_reward_commissions = 100;
         let reward_commissions = (0..num_reward_commissions)
@@ -876,7 +884,7 @@ mod tests {
     #[test]
     fn test_store_commission_accounts_partitioned_empty() {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
-        let bank = Bank::new_for_tests(&genesis_config);
+        let bank = Bank::new_for_indexed_epoch_boundary_tests(&genesis_config);
 
         let expected = 0;
         let reward_commission_accounts = RewardCommissionAccounts::default();
@@ -1003,7 +1011,7 @@ mod tests {
 
         // bank with no rewards to distribute
         let (genesis_config, _mint_keypair) = create_genesis_config(LAMPORTS_PER_SOL);
-        let bank = Bank::new_for_tests(&genesis_config);
+        let bank = Bank::new_for_indexed_epoch_boundary_tests(&genesis_config);
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let rewards_metrics: RewardsMetrics = RewardsMetrics::default();
@@ -1237,8 +1245,8 @@ mod tests {
             deactivate_features(&mut genesis_config, &vec![delay_commission_updates::id()]);
         }
 
-        let (bank, bank_forks) =
-            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let (bank, bank_forks) = Bank::new_for_indexed_epoch_boundary_tests(&genesis_config)
+            .wrap_with_bank_forks_for_tests();
         let vote_address = Pubkey::new_unique();
 
         // No reward should be given in the epoch that a vote account is
@@ -1314,8 +1322,8 @@ mod tests {
         );
 
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
-        let (bank, bank_forks) =
-            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let (bank, bank_forks) = Bank::new_for_indexed_epoch_boundary_tests(&genesis_config)
+            .wrap_with_bank_forks_for_tests();
         assert!(bank.feature_set.snapshot().delay_commission_updates);
 
         let vote_address = Pubkey::new_unique();
@@ -1406,8 +1414,8 @@ mod tests {
         );
 
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
-        let (bank, bank_forks) =
-            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let (bank, bank_forks) = Bank::new_for_indexed_epoch_boundary_tests(&genesis_config)
+            .wrap_with_bank_forks_for_tests();
         assert!(bank.feature_set.snapshot().delay_commission_updates);
 
         let genesis_vote_address = voting_keypair.pubkey();
@@ -2166,8 +2174,8 @@ mod tests {
                 .insert(stake_pubkey, stake_account.into());
         }
 
-        let (bank, bank_forks) =
-            Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
+        let (bank, bank_forks) = Bank::new_for_indexed_epoch_boundary_tests(&genesis_config)
+            .wrap_with_bank_forks_for_tests();
         let next_epoch_slot = bank.get_slots_in_epoch(bank.epoch());
         {
             let cache = bank.epoch_rewards_calculation_cache.lock().unwrap();
