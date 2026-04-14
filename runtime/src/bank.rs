@@ -1705,6 +1705,40 @@ impl Bank {
             })
             .collect::<Vec<_>>();
         stake_delegations.sort_unstable_by_key(|(pubkey, _stake_account)| *pubkey);
+        let stake_program_index_enabled = self.account_indexes_include_key(&stake_program::id());
+        let vote_program_index_enabled = self.account_indexes_include_key(&solana_vote_program::id());
+        let stake_program_index_entries = self
+            .rc
+            .accounts
+            .accounts_db
+            .accounts_index
+            .get_index_key_size(&AccountIndex::ProgramId, &stake_program::id())
+            .unwrap_or_default();
+        let vote_program_index_entries = self
+            .rc
+            .accounts
+            .accounts_db
+            .accounts_index
+            .get_index_key_size(&AccountIndex::ProgramId, &solana_vote_program::id())
+            .unwrap_or_default();
+        let cached_stake_delegations_len = cached_stakes.stake_delegations().len();
+        let indexed_stake_delegations_len = stake_delegations.len();
+        let indexed_total_delegated_stake: u64 = stake_delegations
+            .iter()
+            .map(|(_pubkey, stake_account)| stake_account.delegation().stake)
+            .sum();
+        info!(
+            "epoch-boundary stake load: slot={} epoch={} stake_program_index_enabled={} vote_program_index_enabled={} stake_program_index_entries={} vote_program_index_entries={} cached_stake_delegations={} indexed_stake_delegations={} indexed_total_delegated_stake={}",
+            self.slot(),
+            self.epoch(),
+            stake_program_index_enabled,
+            vote_program_index_enabled,
+            stake_program_index_entries,
+            vote_program_index_entries,
+            cached_stake_delegations_len,
+            indexed_stake_delegations_len,
+            indexed_total_delegated_stake,
+        );
         let ((stake_history, vote_accounts), calculate_activated_stake_time_us) =
             measure_us!(cached_stakes.calculate_activated_stake(
                 self.epoch(),
@@ -1712,6 +1746,22 @@ impl Bank {
                 self.new_warmup_cooldown_rate_epoch(),
                 &stake_delegations
             ));
+        let nonzero_vote_accounts = vote_accounts
+            .delegated_stakes()
+            .filter(|(_vote_pubkey, stake)| *stake > 0)
+            .count();
+        let total_vote_stake: u64 = vote_accounts
+            .delegated_stakes()
+            .map(|(_vote_pubkey, stake)| stake)
+            .sum();
+        info!(
+            "epoch-boundary refreshed vote accounts: slot={} epoch={} vote_accounts={} nonzero_vote_accounts={} total_vote_stake={}",
+            self.slot(),
+            self.epoch(),
+            vote_accounts.len(),
+            nonzero_vote_accounts,
+            total_vote_stake,
+        );
 
         // Apply stake rewards and commission using the distribution vote-account
         // snapshot that matches VAT admission filtering when enabled.
