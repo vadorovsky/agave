@@ -4729,6 +4729,25 @@ impl Bank {
 
     pub fn maybe_rebuild_epoch_boundary_program_id_indexes(&self) {
         let accounts_db = &self.rc.accounts.accounts_db;
+        let stake_program_id = stake_program::id();
+        let vote_program_id = solana_vote_program::id();
+        let stake_program_index_enabled = accounts_db.has_program_id_index_for(&stake_program_id);
+        let vote_program_index_enabled = accounts_db.has_program_id_index_for(&vote_program_id);
+        let stake_program_index_entries =
+            accounts_db.program_id_index_size(&stake_program_id).unwrap_or_default();
+        let vote_program_index_entries =
+            accounts_db.program_id_index_size(&vote_program_id).unwrap_or_default();
+
+        info!(
+            "maybe rebuilding epoch-boundary ProgramId indexes: slot={} bank_id={} stake_program_index_enabled={} vote_program_index_enabled={} stake_program_index_entries={} vote_program_index_entries={}",
+            self.slot(),
+            self.bank_id,
+            stake_program_index_enabled,
+            vote_program_index_enabled,
+            stake_program_index_entries,
+            vote_program_index_entries,
+        );
+
         let missing_index_keys = [stake_program::id(), solana_vote_program::id()]
             .into_iter()
             .filter(|key| {
@@ -4740,7 +4759,18 @@ impl Bank {
         if !missing_index_keys.is_empty() {
             // Replay/open-bank can start from a fully populated primary index with empty
             // secondary indexes. Rebuild just the epoch-boundary ProgramId entries on demand.
+            info!(
+                "epoch-boundary ProgramId index rebuild requested: slot={} missing_index_keys={missing_index_keys:?}",
+                self.slot(),
+            );
             accounts_db.rebuild_program_id_secondary_index_for_keys(&missing_index_keys);
+        } else {
+            info!(
+                "epoch-boundary ProgramId index rebuild not needed: slot={} stake_program_index_entries={} vote_program_index_entries={}",
+                self.slot(),
+                stake_program_index_entries,
+                vote_program_index_entries,
+            );
         }
     }
 

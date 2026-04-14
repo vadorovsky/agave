@@ -991,11 +991,14 @@ pub fn process_blockstore_from_root(
         info!("ledger holds data through slot {highest_slot}");
     }
 
-    bank_forks
-        .read()
-        .unwrap()
-        .root_bank()
-        .maybe_rebuild_epoch_boundary_program_id_indexes();
+    {
+        let root_bank = bank_forks.read().unwrap().root_bank();
+        info!(
+            "checking epoch-boundary ProgramId secondary indexes before replay: root_slot={}",
+            root_bank.slot(),
+        );
+        root_bank.maybe_rebuild_epoch_boundary_program_id_indexes();
+    }
 
     let mut timing = ExecuteTimings::default();
     let (num_slots_processed, num_new_roots_found) = if let Some(start_slot_meta) = blockstore

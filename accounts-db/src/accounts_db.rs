@@ -1174,6 +1174,9 @@ impl AccountsDb {
 
     pub fn rebuild_program_id_secondary_index_for_keys(&self, keys: &[Pubkey]) {
         if !self.account_indexes.contains(&AccountIndex::ProgramId) {
+            info!(
+                "skipping ProgramId secondary index rebuild: ProgramId index is not enabled, requested_keys={keys:?}"
+            );
             return;
         }
 
@@ -1183,12 +1186,20 @@ impl AccountsDb {
             .filter(|key| self.account_indexes.include_key(key))
             .collect::<HashSet<_>>();
         if indexed_keys.is_empty() {
+            info!(
+                "skipping ProgramId secondary index rebuild: no requested keys are included by account_indexes, requested_keys={keys:?}"
+            );
             return;
         }
 
         let mut storages = self.storage.all_storages();
         storages.retain(|storage| storage.has_accounts());
         storages.sort_unstable_by_key(|storage| storage.slot());
+
+        info!(
+            "starting ProgramId secondary index rebuild from storage: requested_keys={keys:?}, indexed_keys={indexed_keys:?}, storages_with_accounts={}",
+            storages.len(),
+        );
 
         let mut rebuild_time = Measure::start("rebuild_program_id_secondary_index");
         let updated_accounts = AtomicU64::new(0);
