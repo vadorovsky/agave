@@ -4727,6 +4727,23 @@ impl Bank {
         self.rc.accounts.account_indexes_include_key(key)
     }
 
+    pub fn maybe_rebuild_epoch_boundary_program_id_indexes(&self) {
+        let accounts_db = &self.rc.accounts.accounts_db;
+        let missing_index_keys = [stake_program::id(), solana_vote_program::id()]
+            .into_iter()
+            .filter(|key| {
+                accounts_db.has_program_id_index_for(key)
+                    && accounts_db.program_id_index_size(key).unwrap_or_default() == 0
+            })
+            .collect::<Vec<_>>();
+
+        if !missing_index_keys.is_empty() {
+            // Replay/open-bank can start from a fully populated primary index with empty
+            // secondary indexes. Rebuild just the epoch-boundary ProgramId entries on demand.
+            accounts_db.rebuild_program_id_secondary_index_for_keys(&missing_index_keys);
+        }
+    }
+
     /// Returns all the accounts this bank can load
     pub fn get_all_accounts(&self, sort_results: bool) -> ScanResult<Vec<PubkeyAccountSlot>> {
         self.rc

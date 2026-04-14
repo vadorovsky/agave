@@ -46,7 +46,7 @@ use {
         accounts_file::{AccountsFile, AccountsFileProvider, StorageAccess},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
-            AccountSecondaryIndexes, AccountsIndex, AccountsIndexRootsStats,
+            AccountIndex, AccountSecondaryIndexes, AccountsIndex, AccountsIndexRootsStats,
             AccountsIndexScanResult, IndexKey, IsCached, ReclaimsSlotList, RefCount, ScanFilter,
             SlotList, Startup, UpsertReclaim, in_mem_accounts_index::StartupStats,
         },
@@ -1160,6 +1160,72 @@ impl AccountsDb {
     /// Returns true if there is an accounts update notifier.
     pub fn has_accounts_update_notifier(&self) -> bool {
         self.accounts_update_notifier.is_some()
+    }
+
+    pub fn has_program_id_index_for(&self, key: &Pubkey) -> bool {
+        self.account_indexes.contains(&AccountIndex::ProgramId)
+            && self.account_indexes.include_key(key)
+    }
+
+    pub fn program_id_index_size(&self, key: &Pubkey) -> Option<usize> {
+        self.accounts_index
+            .get_index_key_size(&AccountIndex::ProgramId, key)
+    }
+
+    pub fn rebuild_program_id_secondary_index_for_keys(&self, keys: &[Pubkey]) {
+        if !self.account_indexes.contains(&AccountIndex::ProgramId) {
+            return;
+        }
+
+        let indexed_keys = keys
+            .iter()
+            .copied()
+            .filter(|key| self.account_indexes.include_key(key))
+            .collect::<HashSet<_>>();
+        if indexed_keys.is_empty() {
+            return;
+        }
+
+        let mut storages = self.storage.all_storages();
+        storages.retain(|storage| storage.has_accounts());
+        storages.sort_unstable_by_key(|storage| storage.slot());
+
+        let mut rebuild_time = Measure::start("rebuild_program_id_secondary_index");
+        let updated_accounts = AtomicU64::new(0);
+        storages.par_iter().for_each(|storage| {
+            let obsolete_accounts: IntSet<_> = storage
+                .obsolete_accounts_read_lock()
+                .filter_obsolete_accounts(None)
+                .map(|(offset, _)| offset)
+                .collect();
+            let mut reader = append_vec::new_scan_accounts_reader();
+            storage
+                .accounts
+                .scan_accounts(&mut reader, |offset, account| {
+                    if obsolete_accounts.contains(&offset) {
+                        return;
+                    }
+
+                    if indexed_keys.contains(account.owner()) {
+                        self.accounts_index.update_secondary_indexes(
+                            account.pubkey,
+                            &account,
+                            &self.account_indexes,
+                        );
+                        updated_accounts.fetch_add(1, Ordering::Relaxed);
+                    }
+                })
+                .expect("must scan accounts storage");
+        });
+        rebuild_time.stop();
+
+        info!(
+            "rebuilt ProgramId secondary index from storage: keys={}, storages={}, updated_accounts={}, elapsed_us={}",
+            indexed_keys.len(),
+            storages.len(),
+            updated_accounts.load(Ordering::Relaxed),
+            rebuild_time.as_us(),
+        );
     }
 
     fn next_id(&self) -> AccountsFileId {
