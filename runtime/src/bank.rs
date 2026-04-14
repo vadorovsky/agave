@@ -1705,21 +1705,14 @@ impl Bank {
             })
             .collect::<Vec<_>>();
         stake_delegations.sort_unstable_by_key(|(pubkey, _stake_account)| *pubkey);
-        let stake_program_index_enabled = self.account_indexes_include_key(&stake_program::id());
-        let vote_program_index_enabled = self.account_indexes_include_key(&solana_vote_program::id());
-        let stake_program_index_entries = self
-            .rc
-            .accounts
-            .accounts_db
-            .accounts_index
-            .get_index_key_size(&AccountIndex::ProgramId, &stake_program::id())
-            .unwrap_or_default();
-        let vote_program_index_entries = self
-            .rc
-            .accounts
-            .accounts_db
-            .accounts_index
-            .get_index_key_size(&AccountIndex::ProgramId, &solana_vote_program::id())
+        let accounts_db = &self.rc.accounts.accounts_db;
+        let stake_program_index_enabled = accounts_db.has_program_id_index_for(&stake_program::id());
+        let vote_program_index_enabled =
+            accounts_db.has_program_id_index_for(&solana_vote_program::id());
+        let stake_program_index_entries =
+            accounts_db.program_id_index_size(&stake_program::id()).unwrap_or_default();
+        let vote_program_index_entries = accounts_db
+            .program_id_index_size(&solana_vote_program::id())
             .unwrap_or_default();
         let cached_stake_delegations_len = cached_stakes.stake_delegations().len();
         let indexed_stake_delegations_len = stake_delegations.len();
