@@ -6,7 +6,7 @@ use {
     solana_nohash_hasher::BuildNoHashHasher,
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     std::{
-        collections::BTreeSet,
+        collections::{BTreeSet, HashSet},
         ops::Deref,
         sync::{
             Arc, RwLock,
@@ -268,6 +268,73 @@ pub struct AccountsCache {
 }
 
 impl AccountsCache {
+    fn collect_slot_cache_pubkeys_by_owner(
+        slot_cache: &SlotCache,
+        owner_a: &Pubkey,
+        owner_b: &Pubkey,
+        owner_a_pubkeys: &mut HashSet<Pubkey>,
+        owner_b_pubkeys: &mut HashSet<Pubkey>,
+    ) {
+        for account in slot_cache.iter() {
+            let cached_account = account.value();
+            let owner = cached_account.account.owner();
+            if owner == owner_a {
+                owner_a_pubkeys.insert(*account.key());
+            }
+            if owner == owner_b {
+                owner_b_pubkeys.insert(*account.key());
+            }
+        }
+    }
+
+    pub fn collect_two_owners_pubkeys_into(
+        &self,
+        ancestors: &Ancestors,
+        owner_a: Pubkey,
+        owner_b: Pubkey,
+        owner_a_pubkeys: &mut HashSet<Pubkey>,
+        owner_b_pubkeys: &mut HashSet<Pubkey>,
+    ) {
+        for slot in ancestors.keys() {
+            if let Some(slot_cache) = self.slot_cache(slot) {
+                Self::collect_slot_cache_pubkeys_by_owner(
+                    &slot_cache,
+                    &owner_a,
+                    &owner_b,
+                    owner_a_pubkeys,
+                    owner_b_pubkeys,
+                );
+            }
+        }
+
+        let max_root_slot = ancestors.min_slot().unwrap_or(Slot::MAX);
+        let unflushed_roots = self.maybe_unflushed_roots.read().unwrap();
+        for &slot in unflushed_roots.range(..=max_root_slot) {
+            if let Some(slot_cache) = self.slot_cache(slot) {
+                Self::collect_slot_cache_pubkeys_by_owner(
+                    &slot_cache,
+                    &owner_a,
+                    &owner_b,
+                    owner_a_pubkeys,
+                    owner_b_pubkeys,
+                );
+            }
+        }
+
+        let roots_being_flushed = self.roots_being_flushed.read().unwrap();
+        for &slot in roots_being_flushed.range(..=max_root_slot) {
+            if let Some(slot_cache) = self.slot_cache(slot) {
+                Self::collect_slot_cache_pubkeys_by_owner(
+                    &slot_cache,
+                    &owner_a,
+                    &owner_b,
+                    owner_a_pubkeys,
+                    owner_b_pubkeys,
+                );
+            }
+        }
+    }
+
     pub fn new_inner(&self) -> Arc<SlotCache> {
         Arc::new(SlotCache {
             cache: DashMap::default(),

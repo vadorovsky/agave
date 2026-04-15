@@ -432,10 +432,6 @@ impl Accounts {
         Self::maybe_abort_scan(result, &config)
     }
 
-    pub fn account_indexes_include_key(&self, key: &Pubkey) -> bool {
-        self.accounts_db.account_indexes.include_key(key)
-    }
-
     pub fn load_all(
         &self,
         ancestors: &Ancestors,

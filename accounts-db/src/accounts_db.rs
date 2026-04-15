@@ -46,7 +46,7 @@ use {
         accounts_file::{AccountsFile, AccountsFileProvider, StorageAccess},
         accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
-            AccountIndex, AccountSecondaryIndexes, AccountsIndex, AccountsIndexRootsStats,
+            AccountSecondaryIndexes, AccountsIndex, AccountsIndexRootsStats,
             AccountsIndexScanResult, IndexKey, IsCached, ReclaimsSlotList, RefCount, ScanFilter,
             SlotList, Startup, UpsertReclaim, in_mem_accounts_index::StartupStats,
         },
@@ -1162,81 +1162,80 @@ impl AccountsDb {
         self.accounts_update_notifier.is_some()
     }
 
-    pub fn has_program_id_index_for(&self, key: &Pubkey) -> bool {
-        self.account_indexes.contains(&AccountIndex::ProgramId)
-            && self.account_indexes.include_key(key)
+    pub fn collect_owner_pubkeys_from_storage(&self, owner: Pubkey) -> Vec<Pubkey> {
+        let (pubkeys, _other_pubkeys) =
+            self.collect_two_owners_pubkeys_from_storage_and_cache(&Ancestors::default(), owner, owner);
+        pubkeys
     }
 
-    pub fn program_id_index_size(&self, key: &Pubkey) -> Option<usize> {
-        self.accounts_index
-            .get_index_key_size(&AccountIndex::ProgramId, key)
-    }
-
-    pub fn rebuild_program_id_secondary_index_for_keys(&self, keys: &[Pubkey]) {
-        if !self.account_indexes.contains(&AccountIndex::ProgramId) {
-            info!(
-                "skipping ProgramId secondary index rebuild: ProgramId index is not enabled, requested_keys={keys:?}"
-            );
-            return;
-        }
-
-        let indexed_keys = keys
-            .iter()
-            .copied()
-            .filter(|key| self.account_indexes.include_key(key))
-            .collect::<HashSet<_>>();
-        if indexed_keys.is_empty() {
-            info!(
-                "skipping ProgramId secondary index rebuild: no requested keys are included by account_indexes, requested_keys={keys:?}"
-            );
-            return;
-        }
-
+    pub fn collect_two_owners_pubkeys_from_storage_and_cache(
+        &self,
+        ancestors: &Ancestors,
+        owner_a: Pubkey,
+        owner_b: Pubkey,
+    ) -> (Vec<Pubkey>, Vec<Pubkey>) {
         let mut storages = self.storage.all_storages();
         storages.retain(|storage| storage.has_accounts());
         storages.sort_unstable_by_key(|storage| storage.slot());
 
+        let mut collect_time = Measure::start("collect_two_owners_pubkeys_from_storage");
+        let (mut owner_a_pubkeys, mut owner_b_pubkeys) = storages
+            .par_iter()
+            .fold(
+                || (HashSet::new(), HashSet::new()),
+                |mut owner_pubkeys, storage| {
+                    let obsolete_accounts: IntSet<_> = storage
+                        .obsolete_accounts_read_lock()
+                        .filter_obsolete_accounts(None)
+                        .map(|(offset, _)| offset)
+                        .collect();
+                    let mut reader = append_vec::new_scan_accounts_reader();
+                    storage
+                        .accounts
+                        .scan_accounts(&mut reader, |offset, account| {
+                            if obsolete_accounts.contains(&offset) {
+                                return;
+                            }
+
+                            if account.owner() == &owner_a {
+                                owner_pubkeys.0.insert(*account.pubkey());
+                            }
+                            if account.owner() == &owner_b {
+                                owner_pubkeys.1.insert(*account.pubkey());
+                            }
+                        })
+                        .expect("must scan accounts storage");
+                    owner_pubkeys
+                },
+            )
+            .reduce(|| (HashSet::new(), HashSet::new()), |mut a, b| {
+                a.0.extend(b.0);
+                a.1.extend(b.1);
+                a
+            });
+        collect_time.stop();
+
         info!(
-            "starting ProgramId secondary index rebuild from storage: requested_keys={keys:?}, indexed_keys={indexed_keys:?}, storages_with_accounts={}",
+            "collected owner pubkeys from storage: owner_a={}, owner_a_count={}, owner_b={}, owner_b_count={}, storages={}, elapsed_us={}",
+            owner_a,
+            owner_a_pubkeys.len(),
+            owner_b,
+            owner_b_pubkeys.len(),
             storages.len(),
+            collect_time.as_us(),
         );
-
-        let mut rebuild_time = Measure::start("rebuild_program_id_secondary_index");
-        let updated_accounts = AtomicU64::new(0);
-        storages.par_iter().for_each(|storage| {
-            let obsolete_accounts: IntSet<_> = storage
-                .obsolete_accounts_read_lock()
-                .filter_obsolete_accounts(None)
-                .map(|(offset, _)| offset)
-                .collect();
-            let mut reader = append_vec::new_scan_accounts_reader();
-            storage
-                .accounts
-                .scan_accounts(&mut reader, |offset, account| {
-                    if obsolete_accounts.contains(&offset) {
-                        return;
-                    }
-
-                    if indexed_keys.contains(account.owner()) {
-                        self.accounts_index.update_secondary_indexes(
-                            account.pubkey,
-                            &account,
-                            &self.account_indexes,
-                        );
-                        updated_accounts.fetch_add(1, Ordering::Relaxed);
-                    }
-                })
-                .expect("must scan accounts storage");
-        });
-        rebuild_time.stop();
-
-        info!(
-            "rebuilt ProgramId secondary index from storage: keys={}, storages={}, updated_accounts={}, elapsed_us={}",
-            indexed_keys.len(),
-            storages.len(),
-            updated_accounts.load(Ordering::Relaxed),
-            rebuild_time.as_us(),
+        self.accounts_cache.collect_two_owners_pubkeys_into(
+            ancestors,
+            owner_a,
+            owner_b,
+            &mut owner_a_pubkeys,
+            &mut owner_b_pubkeys,
         );
+        let mut owner_a_pubkeys = owner_a_pubkeys.into_iter().collect::<Vec<_>>();
+        owner_a_pubkeys.sort_unstable();
+        let mut owner_b_pubkeys = owner_b_pubkeys.into_iter().collect::<Vec<_>>();
+        owner_b_pubkeys.sort_unstable();
+        (owner_a_pubkeys, owner_b_pubkeys)
     }
 
     fn next_id(&self) -> AccountsFileId {

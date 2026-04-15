@@ -81,7 +81,10 @@ use {
     dashmap::DashMap,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
-    rayon::{ThreadPool, ThreadPoolBuilder},
+    rayon::{
+        ThreadPool, ThreadPoolBuilder,
+        iter::{IntoParallelRefIterator, ParallelIterator},
+    },
     serde::{Deserialize, Serialize},
     solana_account::{
         Account, AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
@@ -93,7 +96,7 @@ use {
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
         accounts_db::{AccountsDb, AccountsDbConfig},
         accounts_hash::AccountsLtHash,
-        accounts_index::{AccountIndex, IndexKey},
+        accounts_index::IndexKey,
         accounts_scan::ScanResult,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::Ancestors,
@@ -207,7 +210,6 @@ use {
 #[cfg(feature = "dev-context-only-utils")]
 use {
     dashmap::DashSet,
-    rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     solana_accounts_db::accounts_db::{
         ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
     },
@@ -1690,47 +1692,44 @@ impl Bank {
         // update vote accounts with warmed up stakes before saving a
         // snapshot of stakes in epoch stakes
         let cached_stakes = self.stakes_cache.stakes();
-        let mut stake_delegations = self
-            .get_filtered_indexed_accounts(
-                &IndexKey::ProgramId(stake_program::id()),
-                |account| account.owner() == &stake_program::id(),
-                None,
-            )
-            .expect("indexed epoch-boundary stake lookup should succeed")
-            .into_iter()
-            .filter_map(|(pubkey, account)| {
-                StakeAccount::try_from(account)
-                    .ok()
-                    .map(|stake_account| (pubkey, stake_account))
-            })
-            .collect::<Vec<_>>();
-        stake_delegations.sort_unstable_by_key(|(pubkey, _stake_account)| *pubkey);
-        let accounts_db = &self.rc.accounts.accounts_db;
-        let stake_program_index_enabled = accounts_db.has_program_id_index_for(&stake_program::id());
-        let vote_program_index_enabled =
-            accounts_db.has_program_id_index_for(&solana_vote_program::id());
-        let stake_program_index_entries =
-            accounts_db.program_id_index_size(&stake_program::id()).unwrap_or_default();
-        let vote_program_index_entries = accounts_db
-            .program_id_index_size(&solana_vote_program::id())
-            .unwrap_or_default();
+        let (stake_pubkeys, vote_pubkeys) = self
+            .rc
+            .accounts
+            .accounts_db
+            .collect_two_owners_pubkeys_from_storage_and_cache(
+                &self.ancestors,
+                stake_program::id(),
+                solana_vote_program::id(),
+            );
+        let stake_delegations: Vec<(Pubkey, StakeAccount<Delegation>)> = thread_pool.install(|| {
+            stake_pubkeys
+                .par_iter()
+                .filter_map(|pubkey| {
+                    self.get_account_with_fixed_root_no_cache(pubkey)
+                        .filter(|account| account.owner() == &stake_program::id())
+                        .and_then(|account| {
+                            StakeAccount::try_from(account)
+                                .ok()
+                                .map(|stake_account| (*pubkey, stake_account))
+                        })
+                })
+                .collect::<Vec<_>>()
+        });
         let cached_stake_delegations_len = cached_stakes.stake_delegations().len();
-        let indexed_stake_delegations_len = stake_delegations.len();
-        let indexed_total_delegated_stake: u64 = stake_delegations
+        let loaded_stake_delegations_len = stake_delegations.len();
+        let loaded_total_delegated_stake: u64 = stake_delegations
             .iter()
             .map(|(_pubkey, stake_account)| stake_account.delegation().stake)
             .sum();
         info!(
-            "epoch-boundary stake load: slot={} epoch={} stake_program_index_enabled={} vote_program_index_enabled={} stake_program_index_entries={} vote_program_index_entries={} cached_stake_delegations={} indexed_stake_delegations={} indexed_total_delegated_stake={}",
+            "epoch-boundary stake load: slot={} epoch={} storage_scanned_stake_pubkeys={} storage_scanned_vote_pubkeys={} cached_stake_delegations={} loaded_stake_delegations={} loaded_total_delegated_stake={}",
             self.slot(),
             self.epoch(),
-            stake_program_index_enabled,
-            vote_program_index_enabled,
-            stake_program_index_entries,
-            vote_program_index_entries,
+            stake_pubkeys.len(),
+            vote_pubkeys.len(),
             cached_stake_delegations_len,
-            indexed_stake_delegations_len,
-            indexed_total_delegated_stake,
+            loaded_stake_delegations_len,
+            loaded_total_delegated_stake,
         );
         let ((stake_history, vote_accounts), calculate_activated_stake_time_us) =
             measure_us!(cached_stakes.calculate_activated_stake(
@@ -4716,57 +4715,6 @@ impl Bank {
         )
     }
 
-    pub fn account_indexes_include_key(&self, key: &Pubkey) -> bool {
-        self.rc.accounts.account_indexes_include_key(key)
-    }
-
-    pub fn maybe_rebuild_epoch_boundary_program_id_indexes(&self) {
-        let accounts_db = &self.rc.accounts.accounts_db;
-        let stake_program_id = stake_program::id();
-        let vote_program_id = solana_vote_program::id();
-        let stake_program_index_enabled = accounts_db.has_program_id_index_for(&stake_program_id);
-        let vote_program_index_enabled = accounts_db.has_program_id_index_for(&vote_program_id);
-        let stake_program_index_entries =
-            accounts_db.program_id_index_size(&stake_program_id).unwrap_or_default();
-        let vote_program_index_entries =
-            accounts_db.program_id_index_size(&vote_program_id).unwrap_or_default();
-
-        info!(
-            "maybe rebuilding epoch-boundary ProgramId indexes: slot={} bank_id={} stake_program_index_enabled={} vote_program_index_enabled={} stake_program_index_entries={} vote_program_index_entries={}",
-            self.slot(),
-            self.bank_id,
-            stake_program_index_enabled,
-            vote_program_index_enabled,
-            stake_program_index_entries,
-            vote_program_index_entries,
-        );
-
-        let missing_index_keys = [stake_program::id(), solana_vote_program::id()]
-            .into_iter()
-            .filter(|key| {
-                accounts_db.has_program_id_index_for(key)
-                    && accounts_db.program_id_index_size(key).unwrap_or_default() == 0
-            })
-            .collect::<Vec<_>>();
-
-        if !missing_index_keys.is_empty() {
-            // Replay/open-bank can start from a fully populated primary index with empty
-            // secondary indexes. Rebuild just the epoch-boundary ProgramId entries on demand.
-            info!(
-                "epoch-boundary ProgramId index rebuild requested: slot={} missing_index_keys={missing_index_keys:?}",
-                self.slot(),
-            );
-            accounts_db.rebuild_program_id_secondary_index_for_keys(&missing_index_keys);
-        } else {
-            info!(
-                "epoch-boundary ProgramId index rebuild not needed: slot={} stake_program_index_entries={} vote_program_index_entries={}",
-                self.slot(),
-                stake_program_index_entries,
-                vote_program_index_entries,
-            );
-        }
-    }
-
     /// Returns all the accounts this bank can load
     pub fn get_all_accounts(&self, sort_results: bool) -> ScanResult<Vec<PubkeyAccountSlot>> {
         self.rc
@@ -6374,7 +6322,9 @@ impl Bank {
     pub fn new_for_indexed_epoch_boundary_tests(genesis_config: &GenesisConfig) -> Self {
         let mut account_indexes =
             solana_accounts_db::accounts_index::AccountSecondaryIndexes::default();
-        account_indexes.indexes.insert(AccountIndex::ProgramId);
+        account_indexes
+            .indexes
+            .insert(solana_accounts_db::accounts_index::AccountIndex::ProgramId);
         // Epoch-boundary stake loading uses the ProgramId secondary index in these tests.
         Self::new_with_config_for_tests(
             genesis_config,

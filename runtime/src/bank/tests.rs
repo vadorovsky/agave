@@ -3266,7 +3266,7 @@ fn test_bank_cloned_stake_delegations() {
 }
 
 #[test]
-fn test_load_epoch_boundary_stake_delegations_from_index_match_cache() {
+fn test_load_epoch_boundary_stake_delegations_from_storage_match_cache() {
     let GenesisConfigInfo {
         mut genesis_config,
         mint_keypair,
@@ -3286,16 +3286,7 @@ fn test_load_epoch_boundary_stake_delegations_from_index_match_cache() {
         genesis_config.add_account(pubkey, account);
     }
 
-    let mut account_indexes = AccountSecondaryIndexes::default();
-    account_indexes.indexes.insert(AccountIndex::ProgramId);
-    let bank_config = BankTestConfig {
-        accounts_db_config: AccountsDbConfig {
-            account_indexes: Some(account_indexes),
-            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-        },
-    };
-    let (bank, _bank_forks) =
-        Bank::new_with_config_for_tests(&genesis_config, bank_config).wrap_with_bank_forks_for_tests();
+    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     bank.squash();
     let bank = Bank::new_from_parent(bank, SlotLeader::new_unique(), 1);
 
@@ -3347,19 +3338,30 @@ fn test_load_epoch_boundary_stake_delegations_from_index_match_cache() {
     );
 
     bank.process_transaction(&transaction).unwrap();
+    bank.squash();
+    add_root_and_flush_write_cache(&bank);
+    let bank = Bank::new_from_parent(Arc::new(bank), SlotLeader::new_unique(), 2);
 
-    let rebuilt_stake_delegations = bank
-        .get_filtered_indexed_accounts(
-            &IndexKey::ProgramId(stake_program::id()),
-            |account| account.owner() == &stake_program::id(),
-            None,
+    let storage_scanned_stake_pubkeys = bank
+        .rc
+        .accounts
+        .accounts_db
+        .collect_two_owners_pubkeys_from_storage_and_cache(
+            &bank.ancestors,
+            stake_program::id(),
+            stake_program::id(),
         )
-        .unwrap()
+        .0;
+    let rebuilt_stake_delegations = storage_scanned_stake_pubkeys
         .into_iter()
-        .filter_map(|(pubkey, account)| {
-            StakeAccount::try_from(account)
-                .ok()
-                .map(|stake_account| (pubkey, stake_account))
+        .filter_map(|pubkey| {
+            bank.get_account_with_fixed_root_no_cache(&pubkey)
+                .filter(|account| account.owner() == &stake_program::id())
+                .and_then(|account| {
+                    StakeAccount::try_from(account)
+                        .ok()
+                        .map(|stake_account| (pubkey, stake_account))
+                })
         })
         .collect::<HashMap<_, _>>();
     let cached_stakes = bank.stakes_cache.stakes();
