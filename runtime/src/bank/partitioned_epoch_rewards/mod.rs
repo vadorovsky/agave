@@ -7,7 +7,7 @@ use {
     super::Bank,
     crate::{
         inflation_rewards::points::PointValue, reward_info::RewardInfo,
-        stake_account::StakeAccount, stake_history::StakeHistory,
+        stake_account::EpochRewardStakeAccount, stake_history::StakeHistory,
     },
     rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
@@ -17,7 +17,7 @@ use {
     },
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_stake_interface::state::{Delegation, Stake},
+    solana_stake_interface::state::Stake,
     solana_vote::vote_account::VoteAccounts,
     std::{borrow::Cow, mem::MaybeUninit, sync::Arc},
 };
@@ -243,7 +243,7 @@ impl Default for CalculateValidatorRewardsResult {
 }
 
 pub(super) struct FilteredStakeDelegations<'a> {
-    stake_delegations: Cow<'a, [(Pubkey, StakeAccount<Delegation>)]>,
+    stake_delegations: Cow<'a, [(Pubkey, EpochRewardStakeAccount)]>,
     min_stake_delegation: Option<u64>,
 }
 
@@ -254,7 +254,7 @@ impl FilteredStakeDelegations<'_> {
 
     pub(super) fn par_iter(
         &self,
-    ) -> impl IndexedParallelIterator<Item = Option<(&Pubkey, &StakeAccount<Delegation>)>>
+    ) -> impl IndexedParallelIterator<Item = Option<(&Pubkey, &EpochRewardStakeAccount)>>
     {
         self.stake_delegations
             .par_iter()

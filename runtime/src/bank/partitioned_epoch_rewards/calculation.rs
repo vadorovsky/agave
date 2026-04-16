@@ -15,7 +15,7 @@ use {
             points::{CalculationEnvironment, DelegatedVoteState, PointValue, calculate_points},
             redeem_rewards,
         },
-        stake_account::StakeAccount,
+        stake_account::{EpochRewardStakeAccount, StakeAccount},
         stake_utils,
         stakes::Stakes,
     },
@@ -157,7 +157,7 @@ impl Bank {
     pub(in crate::bank) fn calculate_rewards(
         &self,
         stake_history: &StakeHistory,
-        stake_delegations: &[(Pubkey, StakeAccount<Delegation>)],
+        stake_delegations: &[(Pubkey, EpochRewardStakeAccount)],
         cached_vote_accounts: CachedVoteAccounts<'_>,
         prev_epoch: Epoch,
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
@@ -373,7 +373,7 @@ impl Bank {
 
     pub(in crate::bank) fn filter_stake_delegations<'a>(
         &self,
-        stake_delegations: impl Into<Cow<'a, [(Pubkey, StakeAccount<Delegation>)]>>,
+        stake_delegations: impl Into<Cow<'a, [(Pubkey, EpochRewardStakeAccount)]>>,
     ) -> FilteredStakeDelegations<'a> {
         let feature_snapshot = self.feature_set.snapshot();
         let min_stake_delegation = if feature_snapshot.stake_minimum_delegation_for_rewards {
@@ -403,7 +403,11 @@ impl Bank {
         let mut stake_delegations = stakes
             .stake_delegations()
             .iter()
-            .map(|(pubkey, stake_account)| (*pubkey, stake_account.clone()))
+            .map(|(pubkey, stake_account)| {
+                let lamports = stake_account.lamports();
+                let stake_state = stake_account.stake_state().clone();
+                (*pubkey, EpochRewardStakeAccount::new(lamports, stake_state))
+            })
             .collect::<Vec<_>>();
         stake_delegations.sort_unstable_by_key(|(pubkey, _stake_account)| *pubkey);
         let stake_delegations = self.filter_stake_delegations(stake_delegations);
@@ -432,7 +436,7 @@ impl Bank {
         &self,
         rewarded_epoch: Epoch,
         stake_pubkey: &Pubkey,
-        stake_account: &StakeAccount<Delegation>,
+        stake_account: &EpochRewardStakeAccount,
         point_value: &PointValue,
         stake_history: &StakeHistory,
         cached_vote_accounts: &CachedVoteAccounts<'_>,

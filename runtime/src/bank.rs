@@ -58,7 +58,7 @@ use {
         rent_collector::RentCollector,
         reward_info::RewardInfo,
         runtime_config::RuntimeConfig,
-        stake_account::StakeAccount,
+        stake_account::{EpochRewardStakeAccount, StakeAccount},
         stake_history::StakeHistory as CowStakeHistory,
         stake_weighted_timestamp::{
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
@@ -147,7 +147,8 @@ use {
     solana_slot_hashes::SlotHashes,
     solana_slot_history::{Check, SlotHistory},
     solana_stake_interface::{
-        program as stake_program, stake_history::StakeHistory, state::Delegation,
+        program as stake_program, stake_history::StakeHistory,
+        state::{Delegation, StakeActivationStatus},
         sysvar::stake_history,
     },
     solana_svm::{
@@ -1099,6 +1100,32 @@ struct NewEpochBundle {
     update_rewards_with_thread_pool_time_us: u64,
 }
 
+#[derive(Default)]
+struct EpochBoundaryStakeLoad {
+    reward_stake_accounts: Vec<(Pubkey, EpochRewardStakeAccount)>,
+    stake_history_entry: StakeActivationStatus,
+    delegated_stakes: HashMap<Pubkey, u64>,
+    total_delegated_stake: u64,
+}
+
+impl EpochBoundaryStakeLoad {
+    fn merge(mut self, mut other: Self) -> Self {
+        self.reward_stake_accounts
+            .append(&mut other.reward_stake_accounts);
+        self.stake_history_entry = self.stake_history_entry + other.stake_history_entry;
+        if self.delegated_stakes.len() < other.delegated_stakes.len() {
+            std::mem::swap(&mut self.delegated_stakes, &mut other.delegated_stakes);
+        }
+        for (vote_pubkey, delegated_stake) in other.delegated_stakes {
+            *self.delegated_stakes.entry(vote_pubkey).or_default() += delegated_stake;
+        }
+        self.total_delegated_stake = self
+            .total_delegated_stake
+            .saturating_add(other.total_delegated_stake);
+        self
+    }
+}
+
 impl Bank {
     fn default_with_accounts(accounts: Accounts) -> Self {
         let mut bank = Self {
@@ -1700,26 +1727,54 @@ impl Bank {
                 &self.ancestors,
                 stake_program::id(),
             );
-        let stake_delegations: Vec<(Pubkey, StakeAccount<Delegation>)> = thread_pool.install(|| {
+        let new_rate_activation_epoch = self.new_warmup_cooldown_rate_epoch();
+        let (
+            EpochBoundaryStakeLoad {
+                mut reward_stake_accounts,
+                stake_history_entry,
+                delegated_stakes,
+                total_delegated_stake: loaded_total_delegated_stake,
+            },
+            calculate_activated_stake_time_us,
+        ) = measure_us!(thread_pool.install(|| {
             stake_pubkeys
                 .par_iter()
-                .filter_map(|pubkey| {
-                    self.get_account_with_fixed_root_no_cache(pubkey)
-                        .filter(|account| account.owner() == &stake_program::id())
-                        .and_then(|account| {
-                            StakeAccount::try_from(account)
-                                .ok()
-                                .map(|stake_account| (*pubkey, stake_account))
-                        })
+                .fold(EpochBoundaryStakeLoad::default, |mut loaded, pubkey| {
+                    let Some(account) = self.get_account_with_fixed_root_no_cache(pubkey) else {
+                        return loaded;
+                    };
+                    if account.owner() != &stake_program::id() {
+                        return loaded;
+                    }
+                    let Ok(stake_account) = EpochRewardStakeAccount::try_from(account) else {
+                        return loaded;
+                    };
+                    let delegation = stake_account.delegation();
+                    loaded.stake_history_entry = loaded.stake_history_entry
+                        + delegation.stake_activating_and_deactivating(
+                            cached_stakes.epoch(),
+                            cached_stakes.history(),
+                            new_rate_activation_epoch,
+                        );
+                    *loaded
+                        .delegated_stakes
+                        .entry(delegation.voter_pubkey)
+                        .or_default() += delegation.stake(
+                        self.epoch(),
+                        cached_stakes.history(),
+                        new_rate_activation_epoch,
+                    );
+                    loaded.total_delegated_stake = loaded
+                        .total_delegated_stake
+                        .saturating_add(delegation.stake);
+                    loaded.reward_stake_accounts.push((*pubkey, stake_account));
+                    loaded
                 })
-                .collect::<Vec<_>>()
-        });
+                .reduce(EpochBoundaryStakeLoad::default, EpochBoundaryStakeLoad::merge)
+        }));
+        reward_stake_accounts.sort_unstable_by_key(|(pubkey, _stake_account)| *pubkey);
         let cached_stake_delegations_len = cached_stakes.stake_delegations().len();
-        let loaded_stake_delegations_len = stake_delegations.len();
-        let loaded_total_delegated_stake: u64 = stake_delegations
-            .iter()
-            .map(|(_pubkey, stake_account)| stake_account.delegation().stake)
-            .sum();
+        let loaded_stake_delegations_len = reward_stake_accounts.len();
         info!(
             "epoch-boundary stake load: slot={} epoch={} storage_scanned_stake_pubkeys={} cached_stake_delegations={} loaded_stake_delegations={} loaded_total_delegated_stake={}",
             self.slot(),
@@ -1729,13 +1784,8 @@ impl Bank {
             loaded_stake_delegations_len,
             loaded_total_delegated_stake,
         );
-        let ((stake_history, vote_accounts), calculate_activated_stake_time_us) =
-            measure_us!(cached_stakes.calculate_activated_stake(
-                self.epoch(),
-                thread_pool,
-                self.new_warmup_cooldown_rate_epoch(),
-                &stake_delegations
-            ));
+        let (stake_history, vote_accounts) = cached_stakes
+            .calculate_activated_stake_from_delegated_stakes(stake_history_entry, delegated_stakes);
         let nonzero_vote_accounts = vote_accounts
             .delegated_stakes()
             .filter(|(_vote_pubkey, stake)| *stake > 0)
@@ -1762,7 +1812,7 @@ impl Bank {
         let (rewards_calculation, update_rewards_with_thread_pool_time_us) =
             measure_us!(self.calculate_rewards(
                 &stake_history,
-                &stake_delegations,
+                &reward_stake_accounts,
                 cached_vote_accounts,
                 rewarded_epoch,
                 reward_calc_tracer,

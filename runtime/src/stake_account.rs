@@ -23,6 +23,13 @@ pub struct StakeAccount<T> {
     _phantom: PhantomData<T>,
 }
 
+/// Compact stake-account view used during epoch-boundary reward calculation.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EpochRewardStakeAccount {
+    lamports: u64,
+    stake_state: StakeStateV2,
+}
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(transparent)]
@@ -42,6 +49,33 @@ impl<T> StakeAccount<T> {
     #[inline]
     pub(crate) fn stake_state(&self) -> &StakeStateV2 {
         &self.stake_state
+    }
+}
+
+impl EpochRewardStakeAccount {
+    #[inline]
+    pub(crate) fn new(lamports: u64, stake_state: StakeStateV2) -> Self {
+        Self {
+            lamports,
+            stake_state,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn lamports(&self) -> u64 {
+        self.lamports
+    }
+
+    #[inline]
+    pub(crate) fn stake_state(&self) -> &StakeStateV2 {
+        &self.stake_state
+    }
+
+    #[inline]
+    pub(crate) fn delegation(&self) -> &Delegation {
+        // Safe to unwrap here because EpochRewardStakeAccount is only
+        // constructed from delegation-bearing stake accounts.
+        self.stake_state.delegation_ref().unwrap()
     }
 }
 
@@ -76,6 +110,16 @@ impl TryFrom<AccountSharedData> for StakeAccount<Delegation> {
             stake_state,
             _phantom: PhantomData,
         })
+    }
+}
+
+impl TryFrom<AccountSharedData> for EpochRewardStakeAccount {
+    type Error = Error;
+    fn try_from(account: AccountSharedData) -> Result<Self, Self::Error> {
+        let lamports = account.lamports();
+        let stake_account = StakeAccount::<Delegation>::try_from(account)?;
+        let (_, stake_state) = stake_account.into();
+        Ok(Self::new(lamports, stake_state))
     }
 }
 

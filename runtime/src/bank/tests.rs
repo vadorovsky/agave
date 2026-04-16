@@ -636,12 +636,26 @@ impl Bank {
         reward_calc_tracer: Option<impl RewardCalcTracer>,
     ) -> StakeDelegationsMap {
         let stakes = self.stakes_cache.stakes();
+        let feature_snapshot = self.feature_set.snapshot();
+        let min_stake_delegation = feature_snapshot
+            .stake_minimum_delegation_for_rewards
+            .then(|| {
+                stake_utils::get_minimum_delegation(
+                    feature_snapshot.upgrade_bpf_stake_program_to_v5,
+                )
+                .max(LAMPORTS_PER_SOL)
+            });
         let stake_delegations = stakes
             .stake_delegations()
             .iter()
             .map(|(pubkey, stake_account)| (*pubkey, stake_account.clone()))
+            .filter(|(_pubkey, stake_account)| {
+                min_stake_delegation
+                    .is_none_or(|min_stake_delegation| {
+                        stake_account.delegation().stake >= min_stake_delegation
+                    })
+            })
             .collect::<Vec<_>>();
-        let stake_delegations = self.filter_stake_delegations(stake_delegations);
         // Obtain all unique voter pubkeys from stake delegations.
         fn merge(mut acc: HashSet<Pubkey>, other: HashSet<Pubkey>) -> HashSet<Pubkey> {
             if acc.len() < other.len() {
@@ -653,7 +667,6 @@ impl Bank {
         let voter_pubkeys = thread_pool.install(|| {
             stake_delegations
                 .par_iter()
-                .filter_map(|stake_delegation| stake_delegation)
                 .fold(
                     HashSet::default,
                     |mut voter_pubkeys, (_stake_pubkey, stake_account)| {
@@ -703,7 +716,7 @@ impl Bank {
                 .collect()
         });
         // Join stake accounts with vote-accounts.
-        let push_stake_delegation = |(stake_pubkey, stake_account): (&Pubkey, &StakeAccount<_>)| {
+        let push_stake_delegation = |(stake_pubkey, stake_account): &(Pubkey, StakeAccount<_>)| {
             let delegation = stake_account.delegation();
             let Some(mut vote_delegations) =
                 stake_delegations_map.get_mut(&delegation.voter_pubkey)
@@ -720,10 +733,7 @@ impl Bank {
             vote_delegations.push(stake_delegation);
         };
         thread_pool.install(|| {
-            stake_delegations
-                .par_iter()
-                .filter_map(|stake_delegation| stake_delegation)
-                .for_each(push_stake_delegation);
+            stake_delegations.par_iter().for_each(push_stake_delegation);
         });
         stake_delegations_map
     }

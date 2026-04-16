@@ -1213,9 +1213,7 @@ impl AccountsDb {
         );
         self.accounts_cache
             .collect_owner_pubkeys_into(ancestors, owner, &mut owner_pubkeys);
-        let mut owner_pubkeys = owner_pubkeys.into_iter().collect::<Vec<_>>();
-        owner_pubkeys.sort_unstable();
-        owner_pubkeys
+        owner_pubkeys.into_iter().collect()
     }
 
     fn next_id(&self) -> AccountsFileId {

@@ -7,7 +7,7 @@ use {
     imbl::HashMap as ImblHashMap,
     log::error,
     num_derive::ToPrimitive,
-    rayon::{ThreadPool, prelude::*},
+    rayon::prelude::*,
     serde::Serialize,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::utils::create_account_shared_data,
@@ -22,10 +22,15 @@ use {
     solana_vote_interface::state::VoteStateVersions,
     std::{
         collections::HashMap,
-        ops::Add,
         sync::{Arc, RwLock, RwLockReadGuard},
     },
     thiserror::Error,
+};
+
+#[cfg(test)]
+use {
+    rayon::ThreadPool,
+    std::ops::Add,
 };
 
 mod serde_stakes;
@@ -312,9 +317,13 @@ impl Stakes<StakeAccount> {
         &self.stake_history
     }
 
+    pub(crate) fn epoch(&self) -> Epoch {
+        self.epoch
+    }
+
+    #[cfg(test)]
     pub(crate) fn calculate_activated_stake(
         &self,
-        next_epoch: Epoch,
         thread_pool: &ThreadPool,
         new_rate_activation_epoch: Option<Epoch>,
         stake_delegations: &[(Pubkey, StakeAccount)],
@@ -337,18 +346,25 @@ impl Stakes<StakeAccount> {
                 )
                 .reduce(StakeActivationStatus::default, Add::add)
         });
-        let mut stake_history = self.stake_history.clone();
-        stake_history.add(self.epoch, stake_history_entry);
-        // Refresh the stake distribution of vote accounts for the next epoch,
-        // using new stake history.
-        let vote_accounts = refresh_vote_accounts(
+        let delegated_stakes = calculate_delegated_stakes(
             thread_pool,
-            next_epoch,
-            &self.vote_accounts,
+            self.epoch.saturating_add(1),
             stake_delegations,
-            &stake_history,
+            &self.stake_history,
             new_rate_activation_epoch,
         );
+        self.calculate_activated_stake_from_delegated_stakes(stake_history_entry, delegated_stakes)
+    }
+
+    pub(crate) fn calculate_activated_stake_from_delegated_stakes(
+        &self,
+        stake_history_entry: StakeActivationStatus,
+        delegated_stakes: HashMap<Pubkey, u64>,
+    ) -> (StakeHistory, VoteAccounts) {
+        let mut stake_history = self.stake_history.clone();
+        stake_history.add(self.epoch, stake_history_entry);
+        let vote_accounts =
+            refresh_vote_accounts_from_delegated_stakes(&self.vote_accounts, delegated_stakes);
         (stake_history, vote_accounts)
     }
 
@@ -534,14 +550,14 @@ impl From<Stakes<Stake>> for Stakes<Delegation> {
     }
 }
 
-fn refresh_vote_accounts(
+#[cfg(test)]
+fn calculate_delegated_stakes(
     thread_pool: &ThreadPool,
     epoch: Epoch,
-    vote_accounts: &VoteAccounts,
     stake_delegations: &[(Pubkey, StakeAccount)],
     stake_history: &StakeHistory,
     new_rate_activation_epoch: Option<Epoch>,
-) -> VoteAccounts {
+) -> HashMap<Pubkey, u64> {
     type StakesHashMap = HashMap</*voter:*/ Pubkey, /*stake:*/ u64>;
     fn merge(mut stakes: StakesHashMap, other: StakesHashMap) -> StakesHashMap {
         if stakes.len() < other.len() {
@@ -552,7 +568,7 @@ fn refresh_vote_accounts(
         }
         stakes
     }
-    let delegated_stakes = thread_pool.install(|| {
+    thread_pool.install(|| {
         stake_delegations
             .par_iter()
             .fold(
@@ -565,7 +581,13 @@ fn refresh_vote_accounts(
                 },
             )
             .reduce(HashMap::default, merge)
-    });
+    })
+}
+
+fn refresh_vote_accounts_from_delegated_stakes(
+    vote_accounts: &VoteAccounts,
+    delegated_stakes: HashMap<Pubkey, u64>,
+) -> VoteAccounts {
     vote_accounts
         .iter()
         .map(|(&vote_pubkey, vote_account)| {
@@ -956,7 +978,7 @@ pub(crate) mod tests {
                 .iter()
                 .map(|(pubkey, stake_account)| (*pubkey, stake_account.clone()))
                 .collect::<Vec<_>>();
-            stakes.calculate_activated_stake(next_epoch, &thread_pool, None, &stake_delegations)
+            stakes.calculate_activated_stake(&thread_pool, None, &stake_delegations)
         };
         stakes_cache.activate_epoch(next_epoch, stake_history, vote_accounts);
         {
