@@ -1162,80 +1162,59 @@ impl AccountsDb {
         self.accounts_update_notifier.is_some()
     }
 
-    pub fn collect_owner_pubkeys_from_storage(&self, owner: Pubkey) -> Vec<Pubkey> {
-        let (pubkeys, _other_pubkeys) =
-            self.collect_two_owners_pubkeys_from_storage_and_cache(&Ancestors::default(), owner, owner);
-        pubkeys
-    }
-
-    pub fn collect_two_owners_pubkeys_from_storage_and_cache(
+    pub fn collect_owner_pubkeys_from_storage_and_cache(
         &self,
         ancestors: &Ancestors,
-        owner_a: Pubkey,
-        owner_b: Pubkey,
-    ) -> (Vec<Pubkey>, Vec<Pubkey>) {
+        owner: Pubkey,
+    ) -> Vec<Pubkey> {
         let mut storages = self.storage.all_storages();
         storages.retain(|storage| storage.has_accounts());
         storages.sort_unstable_by_key(|storage| storage.slot());
 
-        let mut collect_time = Measure::start("collect_two_owners_pubkeys_from_storage");
-        let (mut owner_a_pubkeys, mut owner_b_pubkeys) = storages
+        let mut collect_time = Measure::start("collect_owner_pubkeys_from_storage");
+        let mut owner_pubkeys = storages
             .par_iter()
             .fold(
-                || (HashSet::new(), HashSet::new()),
+                HashSet::new,
                 |mut owner_pubkeys, storage| {
                     let obsolete_accounts: IntSet<_> = storage
                         .obsolete_accounts_read_lock()
                         .filter_obsolete_accounts(None)
                         .map(|(offset, _)| offset)
                         .collect();
-                    let mut reader = append_vec::new_scan_accounts_reader();
                     storage
                         .accounts
-                        .scan_accounts(&mut reader, |offset, account| {
+                        .scan_accounts_without_data(|offset, account| {
                             if obsolete_accounts.contains(&offset) {
                                 return;
                             }
 
-                            if account.owner() == &owner_a {
-                                owner_pubkeys.0.insert(*account.pubkey());
-                            }
-                            if account.owner() == &owner_b {
-                                owner_pubkeys.1.insert(*account.pubkey());
+                            if account.owner == &owner {
+                                owner_pubkeys.insert(*account.pubkey());
                             }
                         })
                         .expect("must scan accounts storage");
                     owner_pubkeys
                 },
             )
-            .reduce(|| (HashSet::new(), HashSet::new()), |mut a, b| {
-                a.0.extend(b.0);
-                a.1.extend(b.1);
+            .reduce(HashSet::new, |mut a, b| {
+                a.extend(b);
                 a
             });
         collect_time.stop();
 
         info!(
-            "collected owner pubkeys from storage: owner_a={}, owner_a_count={}, owner_b={}, owner_b_count={}, storages={}, elapsed_us={}",
-            owner_a,
-            owner_a_pubkeys.len(),
-            owner_b,
-            owner_b_pubkeys.len(),
+            "collected owner pubkeys from storage: owner={}, owner_count={}, storages={}, elapsed_us={}",
+            owner,
+            owner_pubkeys.len(),
             storages.len(),
             collect_time.as_us(),
         );
-        self.accounts_cache.collect_two_owners_pubkeys_into(
-            ancestors,
-            owner_a,
-            owner_b,
-            &mut owner_a_pubkeys,
-            &mut owner_b_pubkeys,
-        );
-        let mut owner_a_pubkeys = owner_a_pubkeys.into_iter().collect::<Vec<_>>();
-        owner_a_pubkeys.sort_unstable();
-        let mut owner_b_pubkeys = owner_b_pubkeys.into_iter().collect::<Vec<_>>();
-        owner_b_pubkeys.sort_unstable();
-        (owner_a_pubkeys, owner_b_pubkeys)
+        self.accounts_cache
+            .collect_owner_pubkeys_into(ancestors, owner, &mut owner_pubkeys);
+        let mut owner_pubkeys = owner_pubkeys.into_iter().collect::<Vec<_>>();
+        owner_pubkeys.sort_unstable();
+        owner_pubkeys
     }
 
     fn next_id(&self) -> AccountsFileId {

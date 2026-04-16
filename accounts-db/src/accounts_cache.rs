@@ -287,6 +287,59 @@ impl AccountsCache {
         }
     }
 
+    fn collect_slot_cache_pubkeys_by_single_owner(
+        slot_cache: &SlotCache,
+        owner: &Pubkey,
+        owner_pubkeys: &mut HashSet<Pubkey>,
+    ) {
+        for account in slot_cache.iter() {
+            let cached_account = account.value();
+            if cached_account.account.owner() == owner {
+                owner_pubkeys.insert(*account.key());
+            }
+        }
+    }
+
+    pub fn collect_owner_pubkeys_into(
+        &self,
+        ancestors: &Ancestors,
+        owner: Pubkey,
+        owner_pubkeys: &mut HashSet<Pubkey>,
+    ) {
+        for slot in ancestors.keys() {
+            if let Some(slot_cache) = self.slot_cache(slot) {
+                Self::collect_slot_cache_pubkeys_by_single_owner(
+                    &slot_cache,
+                    &owner,
+                    owner_pubkeys,
+                );
+            }
+        }
+
+        let max_root_slot = ancestors.min_slot().unwrap_or(Slot::MAX);
+        let unflushed_roots = self.maybe_unflushed_roots.read().unwrap();
+        for &slot in unflushed_roots.range(..=max_root_slot) {
+            if let Some(slot_cache) = self.slot_cache(slot) {
+                Self::collect_slot_cache_pubkeys_by_single_owner(
+                    &slot_cache,
+                    &owner,
+                    owner_pubkeys,
+                );
+            }
+        }
+
+        let roots_being_flushed = self.roots_being_flushed.read().unwrap();
+        for &slot in roots_being_flushed.range(..=max_root_slot) {
+            if let Some(slot_cache) = self.slot_cache(slot) {
+                Self::collect_slot_cache_pubkeys_by_single_owner(
+                    &slot_cache,
+                    &owner,
+                    owner_pubkeys,
+                );
+            }
+        }
+    }
+
     pub fn collect_two_owners_pubkeys_into(
         &self,
         ancestors: &Ancestors,

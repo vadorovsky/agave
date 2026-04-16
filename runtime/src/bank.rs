@@ -1692,14 +1692,13 @@ impl Bank {
         // update vote accounts with warmed up stakes before saving a
         // snapshot of stakes in epoch stakes
         let cached_stakes = self.stakes_cache.stakes();
-        let (stake_pubkeys, vote_pubkeys) = self
+        let stake_pubkeys = self
             .rc
             .accounts
             .accounts_db
-            .collect_two_owners_pubkeys_from_storage_and_cache(
+            .collect_owner_pubkeys_from_storage_and_cache(
                 &self.ancestors,
                 stake_program::id(),
-                solana_vote_program::id(),
             );
         let stake_delegations: Vec<(Pubkey, StakeAccount<Delegation>)> = thread_pool.install(|| {
             stake_pubkeys
@@ -1722,11 +1721,10 @@ impl Bank {
             .map(|(_pubkey, stake_account)| stake_account.delegation().stake)
             .sum();
         info!(
-            "epoch-boundary stake load: slot={} epoch={} storage_scanned_stake_pubkeys={} storage_scanned_vote_pubkeys={} cached_stake_delegations={} loaded_stake_delegations={} loaded_total_delegated_stake={}",
+            "epoch-boundary stake load: slot={} epoch={} storage_scanned_stake_pubkeys={} cached_stake_delegations={} loaded_stake_delegations={} loaded_total_delegated_stake={}",
             self.slot(),
             self.epoch(),
             stake_pubkeys.len(),
-            vote_pubkeys.len(),
             cached_stake_delegations_len,
             loaded_stake_delegations_len,
             loaded_total_delegated_stake,

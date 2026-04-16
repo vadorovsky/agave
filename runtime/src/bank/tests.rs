@@ -3346,12 +3346,7 @@ fn test_load_epoch_boundary_stake_delegations_from_storage_match_cache() {
         .rc
         .accounts
         .accounts_db
-        .collect_two_owners_pubkeys_from_storage_and_cache(
-            &bank.ancestors,
-            stake_program::id(),
-            stake_program::id(),
-        )
-        .0;
+        .collect_owner_pubkeys_from_storage_and_cache(&bank.ancestors, stake_program::id());
     let rebuilt_stake_delegations = storage_scanned_stake_pubkeys
         .into_iter()
         .filter_map(|pubkey| {
