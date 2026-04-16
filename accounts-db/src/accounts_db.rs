@@ -1169,38 +1169,39 @@ impl AccountsDb {
     ) -> Vec<Pubkey> {
         let mut storages = self.storage.all_storages();
         storages.retain(|storage| storage.has_accounts());
-        storages.sort_unstable_by_key(|storage| storage.slot());
 
         let mut collect_time = Measure::start("collect_owner_pubkeys_from_storage");
-        let mut owner_pubkeys = storages
-            .par_iter()
-            .fold(
-                HashSet::new,
-                |mut owner_pubkeys, storage| {
-                    let obsolete_accounts: IntSet<_> = storage
-                        .obsolete_accounts_read_lock()
-                        .filter_obsolete_accounts(None)
-                        .map(|(offset, _)| offset)
-                        .collect();
-                    storage
-                        .accounts
-                        .scan_accounts_without_data(|offset, account| {
-                            if obsolete_accounts.contains(&offset) {
-                                return;
-                            }
+        let mut owner_pubkeys = self.thread_pool_foreground.install(|| {
+            storages
+                .par_iter()
+                .fold(
+                    HashSet::new,
+                    |mut owner_pubkeys, storage| {
+                        let obsolete_accounts: IntSet<_> = storage
+                            .obsolete_accounts_read_lock()
+                            .filter_obsolete_accounts(None)
+                            .map(|(offset, _)| offset)
+                            .collect();
+                        storage
+                            .accounts
+                            .scan_accounts_without_data(|offset, account| {
+                                if obsolete_accounts.contains(&offset) {
+                                    return;
+                                }
 
-                            if account.owner == &owner {
-                                owner_pubkeys.insert(*account.pubkey());
-                            }
-                        })
-                        .expect("must scan accounts storage");
-                    owner_pubkeys
-                },
-            )
-            .reduce(HashSet::new, |mut a, b| {
-                a.extend(b);
-                a
-            });
+                                if account.owner == &owner {
+                                    owner_pubkeys.insert(*account.pubkey());
+                                }
+                            })
+                            .expect("must scan accounts storage");
+                        owner_pubkeys
+                    },
+                )
+                .reduce(HashSet::new, |mut a, b| {
+                    a.extend(b);
+                    a
+                })
+        });
         collect_time.stop();
 
         info!(
