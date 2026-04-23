@@ -1305,8 +1305,10 @@ impl Bank {
         let (blockhash_queue, blockhash_queue_time_us) =
             measure_us!(RwLock::new(parent.blockhash_queue.read().unwrap().clone()));
 
-        let (stakes_cache, stakes_cache_time_us) =
-            measure_us!(StakesCache::new(parent.stakes_cache.stakes().clone()));
+        let (stakes_cache, stakes_cache_time_us) = measure_us!(StakesCache::new_from_parent(
+            &parent.stakes_cache,
+            parent.stakes_cache.stakes().clone(),
+        ));
 
         let (epoch_stakes, epoch_stakes_time_us) = measure_us!(parent.epoch_stakes.clone());
 
@@ -1689,13 +1691,13 @@ impl Bank {
         // update vote accounts with warmed up stakes before saving a
         // snapshot of stakes in epoch stakes
         let stakes = self.stakes_cache.stakes();
-        let stake_delegations = stakes.stake_delegations_vec();
+        let stake_delegation_frontier = self.stake_delegation_frontier_query();
         let ((stake_history, vote_accounts), calculate_activated_stake_time_us) =
             measure_us!(stakes.calculate_activated_stake(
                 self.epoch(),
                 thread_pool,
                 self.new_warmup_cooldown_rate_epoch(),
-                &stake_delegations
+                &stake_delegation_frontier
             ));
 
         // Apply stake rewards and commission using the distribution vote-account
@@ -1704,6 +1706,8 @@ impl Bank {
             self.maybe_filter_vote_accounts_for_vat(&vote_accounts);
         let cached_vote_accounts =
             self.get_cached_vote_accounts(rewarded_epoch, &distribution_epoch_vote_accounts);
+        let stake_delegations =
+            self.filter_frontier_query_stake_delegations(stake_delegation_frontier);
         let (rewards_calculation, update_rewards_with_thread_pool_time_us) =
             measure_us!(self.calculate_rewards(
                 &stake_history,
@@ -2720,6 +2724,16 @@ impl Bank {
     pub fn squash(&self) -> SquashTiming {
         self.freeze();
 
+        let rooted_stake_delegation_fork_ids = self
+            .parents()
+            .into_iter()
+            .rev()
+            .filter_map(|bank| bank.stakes_cache.stake_delegation_fork_id())
+            .chain(self.stakes_cache.stake_delegation_fork_id())
+            .collect::<Vec<_>>();
+        self.stakes_cache
+            .apply_rooted_stake_delegation_forks(&rooted_stake_delegation_fork_ids);
+
         //this bank and all its parents are now on the rooted path
         let mut roots = vec![self.slot()];
         roots.append(&mut self.parents().iter().map(|p| p.slot()).collect());
@@ -2750,6 +2764,32 @@ impl Bank {
             squash_accounts_cache_ms: total_cache_us / 1000,
             squash_cache_ms: squash_cache_time.as_ms(),
         }
+    }
+
+    fn stake_delegation_frontier_snapshot(
+        &self,
+    ) -> crate::stake_delegation_index::FrontierStakeDelegations {
+        let fork_ids = self
+            .parents()
+            .into_iter()
+            .rev()
+            .filter_map(|bank| bank.stakes_cache.stake_delegation_fork_id())
+            .chain(self.stakes_cache.stake_delegation_fork_id())
+            .collect::<Vec<_>>();
+        self.stakes_cache.frontier_stake_delegations(&fork_ids)
+    }
+
+    fn stake_delegation_frontier_query(
+        &self,
+    ) -> crate::stake_delegation_index::FrontierQuery<'_> {
+        let fork_ids = self
+            .parents()
+            .into_iter()
+            .rev()
+            .filter_map(|bank| bank.stakes_cache.stake_delegation_fork_id())
+            .chain(self.stakes_cache.stake_delegation_fork_id())
+            .collect::<Vec<_>>();
+        self.stakes_cache.frontier_query(&fork_ids)
     }
 
     /// Return the more recent checkpoint of this bank instance.

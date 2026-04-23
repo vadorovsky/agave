@@ -7,9 +7,10 @@ use {
     super::Bank,
     crate::{
         inflation_rewards::points::PointValue, reward_info::RewardInfo,
+        stake_delegation_index::FrontierQuery,
         stake_account::StakeAccount, stake_history::StakeHistory,
     },
-    rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
+    rayon::iter::{Either, IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
         stake_rewards::StakeReward,
@@ -250,41 +251,75 @@ impl Default for CalculateValidatorRewardsResult {
     }
 }
 
+pub(super) enum StakeDelegationSource<'a> {
+    Vector(Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>),
+    FrontierQuery(FrontierQuery<'a>),
+}
+
 pub(super) struct FilteredStakeDelegations<'a> {
-    stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+    stake_delegations: StakeDelegationSource<'a>,
     min_stake_delegation: Option<u64>,
 }
 
 impl<'a> FilteredStakeDelegations<'a> {
+    pub(super) fn from_vec(
+        stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
+        min_stake_delegation: Option<u64>,
+    ) -> Self {
+        Self {
+            stake_delegations: StakeDelegationSource::Vector(stake_delegations),
+            min_stake_delegation,
+        }
+    }
+
+    pub(super) fn from_frontier_query(
+        stake_delegations: FrontierQuery<'a>,
+        min_stake_delegation: Option<u64>,
+    ) -> Self {
+        Self {
+            stake_delegations: StakeDelegationSource::FrontierQuery(stake_delegations),
+            min_stake_delegation,
+        }
+    }
+
     pub(super) fn len(&self) -> usize {
-        self.stake_delegations.len()
+        match &self.stake_delegations {
+            StakeDelegationSource::Vector(stake_delegations) => stake_delegations.len(),
+            StakeDelegationSource::FrontierQuery(stake_delegations) => stake_delegations.len(),
+        }
     }
 
     pub(super) fn par_iter(
         &'a self,
     ) -> impl IndexedParallelIterator<Item = Option<(&'a Pubkey, &'a StakeAccount<Delegation>)>>
     {
-        self.stake_delegations
-            .par_iter()
-            // We yield `None` items instead of filtering them out to
-            // keep the number of elements predictable. It's better to
-            // let the callers deal with `None` elements and even store
-            // them in collections (that are allocated once with the
-            // size of `FilteredStakeDelegations::len`) rather than
-            // `collect` yet another time (which would take ~100ms).
-            .map(|(pubkey, stake_account)| {
-                match self.min_stake_delegation {
-                    Some(min_stake_delegation)
-                        if stake_account.delegation().stake < min_stake_delegation =>
-                    {
-                        None
+        let min_stake_delegation = self.min_stake_delegation;
+        match &self.stake_delegations {
+            StakeDelegationSource::Vector(stake_delegations) => Either::Left(
+                stake_delegations.par_iter().map(move |(pubkey, stake_account)| {
+                    match min_stake_delegation {
+                        Some(min_stake_delegation)
+                            if stake_account.delegation().stake < min_stake_delegation =>
+                        {
+                            None
+                        }
+                        _ => Some((*pubkey, *stake_account)),
                     }
-                    _ => {
-                        // Dereference `&&` to `&`.
-                        Some((*pubkey, *stake_account))
+                }),
+            ),
+            StakeDelegationSource::FrontierQuery(stake_delegations) => Either::Right(
+                stake_delegations.par_iter().map(move |(pubkey, stake_account)| {
+                    match min_stake_delegation {
+                        Some(min_stake_delegation)
+                            if stake_account.delegation().stake < min_stake_delegation =>
+                        {
+                            None
+                        }
+                        _ => Some((pubkey, stake_account)),
                     }
-                }
-            })
+                }),
+            ),
+        }
     }
 }
 

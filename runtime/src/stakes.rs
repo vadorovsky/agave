@@ -1,7 +1,13 @@
 //! Stakes serve as a cache of stake and vote accounts to derive
 //! node stakes
 use {
-    crate::{stake_account, stake_history::StakeHistory},
+    crate::{
+        stake_account,
+        stake_delegation_index::{
+            FrontierQuery, FrontierStakeDelegations, StakeDelegationForkId, StakeDelegationIndex,
+        },
+        stake_history::StakeHistory,
+    },
     imbl::HashMap as ImblHashMap,
     log::error,
     num_derive::ToPrimitive,
@@ -64,16 +70,63 @@ pub enum InvalidCacheEntryReason {
 type StakeAccount = stake_account::StakeAccount<Delegation>;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Default, Debug)]
-pub(crate) struct StakesCache(RwLock<Stakes<StakeAccount>>);
+#[derive(Debug)]
+pub(crate) struct StakesCache {
+    stakes: RwLock<Stakes<StakeAccount>>,
+    stake_delegation_index: Arc<StakeDelegationIndex>,
+    stake_delegation_fork_id: Option<StakeDelegationForkId>,
+}
 
 impl StakesCache {
     pub(crate) fn new(stakes: Stakes<StakeAccount>) -> Self {
-        Self(RwLock::new(stakes))
+        let stake_delegation_index = Arc::new(StakeDelegationIndex::new(&stakes.stake_delegations));
+        Self {
+            stakes: RwLock::new(stakes),
+            stake_delegation_index,
+            stake_delegation_fork_id: None,
+        }
+    }
+
+    pub(crate) fn new_from_parent(parent: &Self, stakes: Stakes<StakeAccount>) -> Self {
+        let stake_delegation_index = Arc::clone(&parent.stake_delegation_index);
+        let stake_delegation_fork_id = Some(stake_delegation_index.allocate_fork());
+        Self {
+            stakes: RwLock::new(stakes),
+            stake_delegation_index,
+            stake_delegation_fork_id,
+        }
     }
 
     pub(crate) fn stakes(&self) -> RwLockReadGuard<'_, Stakes<StakeAccount>> {
-        self.0.read().unwrap()
+        self.stakes.read().unwrap()
+    }
+
+    pub(crate) fn stake_delegation_fork_id(&self) -> Option<StakeDelegationForkId> {
+        self.stake_delegation_fork_id
+    }
+
+    pub(crate) fn frontier_stake_delegations(
+        &self,
+        fork_ids_in_ancestor_order: &[StakeDelegationForkId],
+    ) -> FrontierStakeDelegations {
+        self.stake_delegation_index
+            .frontier_snapshot(fork_ids_in_ancestor_order)
+    }
+
+    pub(crate) fn frontier_query(
+        &self,
+        fork_ids_in_ancestor_order: &[StakeDelegationForkId],
+    ) -> FrontierQuery<'_> {
+        self.stake_delegation_index
+            .frontier_query(fork_ids_in_ancestor_order)
+    }
+
+    pub(crate) fn apply_rooted_stake_delegation_forks(
+        &self,
+        fork_ids_in_ancestor_order: &[StakeDelegationForkId],
+    ) {
+        self.stake_delegation_index
+            .apply_rooted_forks(fork_ids_in_ancestor_order);
     }
 
     pub(crate) fn check_and_store(
@@ -92,12 +145,17 @@ impl StakesCache {
         if account.lamports() == 0 {
             if solana_vote_program::check_id(owner) {
                 let _old_vote_account = {
-                    let mut stakes = self.0.write().unwrap();
+                    let mut stakes = self.stakes.write().unwrap();
                     stakes.remove_vote_account(pubkey)
                 };
             } else if stake_program::check_id(owner) {
-                let mut stakes = self.0.write().unwrap();
+                let mut stakes = self.stakes.write().unwrap();
                 stakes.remove_stake_delegation(pubkey, new_rate_activation_epoch);
+                if let Some(fork_id) = self.stake_delegation_fork_id {
+                    self.stake_delegation_index.remove_fork(fork_id, pubkey);
+                } else {
+                    self.stake_delegation_index.remove_root(pubkey);
+                }
             }
             return;
         }
@@ -108,7 +166,7 @@ impl StakesCache {
                     Ok(vote_account) => {
                         // drop the old account after releasing the lock
                         let _old_vote_account = {
-                            let mut stakes = self.0.write().unwrap();
+                            let mut stakes = self.stakes.write().unwrap();
                             stakes.upsert_vote_account(
                                 pubkey,
                                 vote_account,
@@ -119,7 +177,7 @@ impl StakesCache {
                     Err(_) => {
                         // drop the old account after releasing the lock
                         let _old_vote_account = {
-                            let mut stakes = self.0.write().unwrap();
+                            let mut stakes = self.stakes.write().unwrap();
                             stakes.remove_vote_account(pubkey)
                         };
                     }
@@ -127,23 +185,34 @@ impl StakesCache {
             } else {
                 // drop the old account after releasing the lock
                 let _old_vote_account = {
-                    let mut stakes = self.0.write().unwrap();
+                    let mut stakes = self.stakes.write().unwrap();
                     stakes.remove_vote_account(pubkey)
                 };
             };
         } else if stake_program::check_id(owner) {
             match StakeAccount::try_from(create_account_shared_data(account)) {
                 Ok(stake_account) => {
-                    let mut stakes = self.0.write().unwrap();
+                    let mut stakes = self.stakes.write().unwrap();
                     stakes.upsert_stake_delegation(
                         *pubkey,
-                        stake_account,
+                        stake_account.clone(),
                         new_rate_activation_epoch,
                     );
+                    if let Some(fork_id) = self.stake_delegation_fork_id {
+                        self.stake_delegation_index
+                            .upsert_fork(fork_id, *pubkey, stake_account);
+                    } else {
+                        self.stake_delegation_index.upsert_root(*pubkey, stake_account);
+                    }
                 }
                 Err(_) => {
-                    let mut stakes = self.0.write().unwrap();
+                    let mut stakes = self.stakes.write().unwrap();
                     stakes.remove_stake_delegation(pubkey, new_rate_activation_epoch);
+                    if let Some(fork_id) = self.stake_delegation_fork_id {
+                        self.stake_delegation_index.remove_fork(fork_id, pubkey);
+                    } else {
+                        self.stake_delegation_index.remove_root(pubkey);
+                    }
                 }
             }
         }
@@ -155,8 +224,22 @@ impl StakesCache {
         stake_history: StakeHistory,
         vote_accounts: VoteAccounts,
     ) {
-        let mut stakes = self.0.write().unwrap();
+        let mut stakes = self.stakes.write().unwrap();
         stakes.activate_epoch(next_epoch, stake_history, vote_accounts)
+    }
+}
+
+impl Default for StakesCache {
+    fn default() -> Self {
+        Self::new(Stakes::default())
+    }
+}
+
+impl Drop for StakesCache {
+    fn drop(&mut self) {
+        if let Some(fork_id) = self.stake_delegation_fork_id {
+            self.stake_delegation_index.release_fork(fork_id);
+        }
     }
 }
 
@@ -333,7 +416,7 @@ impl Stakes<StakeAccount> {
         next_epoch: Epoch,
         thread_pool: &ThreadPool,
         new_rate_activation_epoch: Option<Epoch>,
-        stake_delegations: &[(&Pubkey, &StakeAccount)],
+        stake_delegations: &FrontierQuery<'_>,
     ) -> (StakeHistory, VoteAccounts) {
         // Wrap up the prev epoch by adding new stake history entry for the
         // prev epoch.
@@ -479,22 +562,6 @@ impl Stakes<StakeAccount> {
         &self.stake_delegations
     }
 
-    /// Collects stake delegations into a vector, which then can be used for
-    /// parallel iteration with [`rayon`].
-    ///
-    /// # Performance
-    ///
-    /// The execution of this method takes ~200ms and it collects elements of
-    /// the [`imbl::HashMap`], which is a [hash array mapped trie (HAMT)][hamt],
-    /// so that operation involves a depth-first traversal with jumps. However,
-    /// it's still a reasonable tradeoff if the caller iterates over these
-    /// elements.
-    ///
-    /// [hamt]: https://en.wikipedia.org/wiki/Hash_array_mapped_trie
-    pub(crate) fn stake_delegations_vec(&self) -> Vec<(&Pubkey, &StakeAccount)> {
-        self.stake_delegations.iter().collect()
-    }
-
     pub(crate) fn highest_staked_node(&self) -> Option<SlotLeader> {
         let (vote_address, vote_account) = self.vote_accounts.find_max_by_delegated_stake()?;
         Some(SlotLeader {
@@ -568,7 +635,7 @@ fn refresh_vote_accounts(
     thread_pool: &ThreadPool,
     epoch: Epoch,
     vote_accounts: &VoteAccounts,
-    stake_delegations: &[(&Pubkey, &StakeAccount)],
+    stake_delegations: &FrontierQuery<'_>,
     stake_history: &StakeHistory,
     new_rate_activation_epoch: Option<Epoch>,
 ) -> VoteAccounts {
@@ -979,9 +1046,9 @@ pub(crate) mod tests {
         }
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let next_epoch = 3;
+        let stake_delegations = stakes_cache.frontier_query(&[]);
         let (stake_history, vote_accounts) = {
             let stakes = stakes_cache.stakes();
-            let stake_delegations = stakes.stake_delegations_vec();
             stakes.calculate_activated_stake(next_epoch, &thread_pool, None, &stake_delegations)
         };
         stakes_cache.activate_epoch(next_epoch, stake_history, vote_accounts);

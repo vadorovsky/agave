@@ -620,7 +620,7 @@ impl Bank {
         reward_calc_tracer: Option<impl RewardCalcTracer>,
     ) -> StakeDelegationsMap {
         let stakes = self.stakes_cache.stakes();
-        let stake_delegations = stakes.stake_delegations_vec();
+        let stake_delegations = stakes.stake_delegations().iter().collect::<Vec<_>>();
         let stake_delegations = self.filter_stake_delegations(stake_delegations);
         // Obtain all unique voter pubkeys from stake delegations.
         fn merge(mut acc: HashSet<Pubkey>, other: HashSet<Pubkey>) -> HashSet<Pubkey> {

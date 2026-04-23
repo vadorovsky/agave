@@ -37,6 +37,7 @@ pub mod snapshot_utils;
 mod stake_account;
 #[cfg(feature = "dev-context-only-utils")]
 pub mod stake_account;
+mod stake_delegation_index;
 pub mod stake_history;
 pub mod stake_utils;
 pub mod stake_weighted_timestamp;
