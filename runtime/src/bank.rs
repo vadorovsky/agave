@@ -6284,6 +6284,11 @@ impl Bank {
         )
     }
 
+    /// Creates a new bank that points to an immutable checkpoint of another bank.
+    pub fn new_from_parent_for_tests(parent: Arc<Bank>, leader: SlotLeader, slot: Slot) -> Self {
+        Self::new_from_parent(parent, leader, slot)
+    }
+
     pub fn new_from_parent_with_bank_forks(
         bank_forks: &RwLock<BankForks>,
         parent: Arc<Bank>,
@@ -6296,6 +6301,17 @@ impl Bank {
             .unwrap()
             .insert(bank)
             .clone_without_scheduler()
+    }
+
+    /// Creates a new bank that points to an immutable checkpoint of another bank, like
+    /// `new_from_parent_for_tests`, but additionally:
+    ///
+    /// * Doesn't assume that the parent is anywhere near `slot`, parent could be millions of slots
+    ///   in the past.
+    /// * Adjusts the new bank's tick height to avoid having to run PoH for millions of slots.
+    /// * Freezes the new bank, assuming that the user will `Bank::new_from_parent` from this bank.
+    pub fn warp_from_parent_for_tests(parent: Arc<Bank>, leader: SlotLeader, slot: Slot) -> Self {
+        Self::warp_from_parent(parent, leader, slot)
     }
 
     /// Prepare a transaction batch from a list of legacy transactions. Used for tests only.

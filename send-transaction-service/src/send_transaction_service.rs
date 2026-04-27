@@ -632,7 +632,7 @@ mod test {
         let leader_forward_count = 1;
         let config = Config::default();
 
-        let root_bank = Bank::new_from_parent(
+        let root_bank = Bank::new_from_parent_for_tests(
             bank_forks.read().unwrap().working_bank(),
             SlotLeader::default(),
             1,
@@ -655,7 +655,8 @@ mod test {
             (transaction, signature)
         };
 
-        let working_child = Bank::new_from_parent(root_bank.clone(), SlotLeader::default(), 2);
+        let working_child =
+            Bank::new_from_parent_for_tests(root_bank.clone(), SlotLeader::default(), 2);
         let working_bank = bank_forks
             .write()
             .unwrap()
@@ -911,7 +912,7 @@ mod test {
         let leader_forward_count = 1;
         let config = Config::default();
 
-        let root_bank = Bank::new_from_parent(
+        let root_bank = Bank::new_from_parent_for_tests(
             bank_forks.read().unwrap().working_bank(),
             SlotLeader::default(),
             1,
@@ -943,7 +944,8 @@ mod test {
             AccountSharedData::new_data(43, &nonce_state, &system_program::id()).unwrap();
         root_bank.store_account(&nonce_address, &nonce_account);
 
-        let working_child = Bank::new_from_parent(root_bank.clone(), SlotLeader::default(), 2);
+        let working_child =
+            Bank::new_from_parent_for_tests(root_bank.clone(), SlotLeader::default(), 2);
         let working_bank = bank_forks
             .write()
             .unwrap()

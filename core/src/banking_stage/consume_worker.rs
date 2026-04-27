@@ -1309,7 +1309,8 @@ pub(crate) mod external {
             } = create_slow_genesis_config(10_000);
             let (root_bank, _root_bank_forks) =
                 Bank::new_with_bank_forks_for_tests(&genesis_config);
-            let child_bank = Bank::new_from_parent(root_bank, SlotLeader::new_unique(), 1);
+            let child_bank =
+                Bank::new_from_parent_for_tests(root_bank, SlotLeader::new_unique(), 1);
             let (bank, bank_forks) = child_bank.wrap_with_bank_forks_for_tests();
 
             let logon = ClientLogon {
@@ -2842,7 +2843,7 @@ mod tests {
         } = create_slow_genesis_config(10_000);
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         // Warp to next epoch for MaxAge tests.
-        let bank = Bank::new_from_parent(
+        let bank = Bank::new_from_parent_for_tests(
             bank.clone(),
             SlotLeader::new_unique(),
             bank.get_epoch_info().slots_in_epoch,

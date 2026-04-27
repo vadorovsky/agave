@@ -3221,7 +3221,7 @@ mod tests {
         ));
 
         // bank=1, wait=0, should pass, bank is past the wait slot
-        let bank_forks = BankForks::new_rw_arc(Bank::new_from_parent(
+        let bank_forks = BankForks::new_rw_arc(Bank::new_from_parent_for_tests(
             bank_forks.read().unwrap().root_bank(),
             SlotLeader::default(),
             1,

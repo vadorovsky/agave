@@ -171,7 +171,7 @@ fn bank_with_feature_activated(
     feature_id: &Pubkey,
 ) -> Arc<Bank> {
     let slot = parent.slot().saturating_add(1);
-    let mut bank = Bank::new_from_parent(parent, SlotLeader::new_unique(), slot);
+    let mut bank = Bank::new_from_parent_for_tests(parent, SlotLeader::new_unique(), slot);
     bank.activate_feature(feature_id);
     bank_forks
         .write()
@@ -187,7 +187,7 @@ fn bank_with_feature_deactivated(
     feature_id: &Pubkey,
 ) -> Arc<Bank> {
     let slot = parent.slot().saturating_add(1);
-    let mut bank = Bank::new_from_parent(parent, SlotLeader::new_unique(), slot);
+    let mut bank = Bank::new_from_parent_for_tests(parent, SlotLeader::new_unique(), slot);
     bank.deactivate_feature(feature_id);
     bank_forks
         .write()

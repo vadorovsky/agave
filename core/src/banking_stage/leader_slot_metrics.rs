@@ -813,7 +813,7 @@ mod tests {
             Bank::new_for_tests(&genesis.genesis_config).wrap_with_bank_forks_for_tests();
 
         // Create a child descended from the first bank
-        let next_bank = Arc::new(Bank::new_from_parent(
+        let next_bank = Arc::new(Bank::new_from_parent_for_tests(
             first_bank.clone(),
             SlotLeader::new_unique(),
             first_bank.slot() + 1,

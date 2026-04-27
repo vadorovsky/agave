@@ -326,7 +326,7 @@ mod tests {
 
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank.squash();
-        let bank = Bank::new_from_parent(bank, SlotLeader::new_unique(), 1);
+        let bank = Bank::new_from_parent_for_tests(bank, SlotLeader::new_unique(), 1);
         bank.set_sysvar_for_tests(&EpochRewards::default());
 
         let stake_rent = bank.get_minimum_balance_for_rent_exemption(StakeStateV2::size_of());

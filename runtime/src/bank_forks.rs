@@ -796,7 +796,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap()[0].clone();
-        let child_bank = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let child_bank = Bank::new_from_parent_for_tests(bank0, SlotLeader::default(), 1);
         child_bank.register_default_tick_for_test();
         bank_forks.write().unwrap().insert(child_bank);
         let bank_forks = bank_forks.read().unwrap();
@@ -838,7 +838,7 @@ mod tests {
             let bank_forks = BankForks::new_rw_arc(bank0);
             let bank0 = bank_forks.read().unwrap()[0].clone();
             bank0.freeze();
-            Bank::new_from_parent(bank0, SlotLeader::default(), root_slot)
+            Bank::new_from_parent_for_tests(bank0, SlotLeader::default(), root_slot)
         };
         root_bank.feature_set = feature_set;
 
@@ -929,7 +929,7 @@ mod tests {
         assert_eq!(migration_status.migration_slot(), None);
 
         // Migration can still succeed
-        let mut bank = Bank::new_from_parent(root_bank, SlotLeader::default(), 10);
+        let mut bank = Bank::new_from_parent_for_tests(root_bank, SlotLeader::default(), 10);
         let genesis_cert = Certificate {
             cert_type: CertificateType::Finalize(1),
             signature: BLSSignature([0; BLS_SIGNATURE_AFFINE_SIZE]),
@@ -948,9 +948,9 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap()[0].clone();
-        let bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+        let bank1 = Bank::new_from_parent_for_tests(bank0.clone(), SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
-        let bank2 = Bank::new_from_parent(bank0, SlotLeader::default(), 2);
+        let bank2 = Bank::new_from_parent_for_tests(bank0, SlotLeader::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
         let bank_forks = bank_forks.read().unwrap();
         let descendants = bank_forks.descendants();
@@ -966,9 +966,9 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap()[0].clone();
-        let bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+        let bank1 = Bank::new_from_parent_for_tests(bank0.clone(), SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
-        let bank2 = Bank::new_from_parent(bank0, SlotLeader::default(), 2);
+        let bank2 = Bank::new_from_parent_for_tests(bank0, SlotLeader::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
         let bank_forks = bank_forks.read().unwrap();
         let ancestors = bank_forks.ancestors();
@@ -985,7 +985,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap()[0].clone();
-        let child_bank = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let child_bank = Bank::new_from_parent_for_tests(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(child_bank);
 
         let frozen_slots: HashSet<Slot> = bank_forks
@@ -1004,7 +1004,7 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap()[0].clone();
-        let child_bank = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let child_bank = Bank::new_from_parent_for_tests(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(child_bank);
         assert_eq!(bank_forks.read().unwrap().active_bank_slots(), vec![1]);
     }
@@ -1036,12 +1036,12 @@ mod tests {
             // Clock::unix_timestamp from Bank::unix_timestamp_from_genesis()
             let update_timestamp_case = slot == slots_in_epoch;
 
-            let child1 = Bank::new_from_parent(
+            let child1 = Bank::new_from_parent_for_tests(
                 bank_forks0.read().unwrap()[slot - 1].clone(),
                 SlotLeader::default(),
                 slot,
             );
-            let child2 = Bank::new_from_parent(
+            let child2 = Bank::new_from_parent_for_tests(
                 bank_forks1.read().unwrap()[slot - 1].clone(),
                 SlotLeader::default(),
                 slot,
@@ -1090,7 +1090,7 @@ mod tests {
     fn extend_bank_forks(bank_forks: Arc<RwLock<BankForks>>, parent_child_pairs: &[(Slot, Slot)]) {
         for (parent, child) in parent_child_pairs.iter() {
             let parent: Arc<Bank> = bank_forks.read().unwrap().banks[parent].clone();
-            let child_bank = Bank::new_from_parent(parent, SlotLeader::default(), *child);
+            let child_bank = Bank::new_from_parent_for_tests(parent, SlotLeader::default(), *child);
             bank_forks.write().unwrap().insert(child_bank);
         }
     }

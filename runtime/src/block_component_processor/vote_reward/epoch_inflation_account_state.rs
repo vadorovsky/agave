@@ -203,14 +203,14 @@ mod tests {
             let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis.genesis_config));
             let bank_epoch_0 = bank_forks.read().unwrap().root_bank();
             let first_slot_in_epoch_1 = bank_epoch_0.epoch_schedule().get_first_slot_in_epoch(1);
-            let bank_epoch_1 = Arc::new(Bank::new_from_parent(
+            let bank_epoch_1 = Arc::new(Bank::new_from_parent_for_tests(
                 bank_epoch_0.clone(),
                 SlotLeader::new_unique(),
                 first_slot_in_epoch_1,
             ));
             assert_eq!(bank_epoch_1.epoch(), 1);
             let first_slot_in_epoch_2 = bank_epoch_1.epoch_schedule().get_first_slot_in_epoch(2);
-            let bank_epoch_2 = Arc::new(Bank::new_from_parent(
+            let bank_epoch_2 = Arc::new(Bank::new_from_parent_for_tests(
                 bank_epoch_1.clone(),
                 SlotLeader::new_unique(),
                 first_slot_in_epoch_2,

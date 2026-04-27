@@ -4801,8 +4801,11 @@ pub mod tests {
         )
         .unwrap();
         let bank0_last_blockhash = bank0.last_blockhash();
-        let bank1_child =
-            Bank::new_from_parent(bank0.clone_without_scheduler(), SlotLeader::default(), 1);
+        let bank1_child = Bank::new_from_parent_for_tests(
+            bank0.clone_without_scheduler(),
+            SlotLeader::default(),
+            1,
+        );
         let bank1 = bank_forks.write().unwrap().insert(bank1_child);
         confirm_full_slot(
             &blockstore,
@@ -4957,7 +4960,11 @@ pub mod tests {
             i += 1;
 
             let slot = bank.slot() + rng().random_range(1..3);
-            bank = Arc::new(Bank::new_from_parent(bank, SlotLeader::default(), slot));
+            bank = Arc::new(Bank::new_from_parent_for_tests(
+                bank,
+                SlotLeader::default(),
+                slot,
+            ));
         }
     }
 
@@ -5050,7 +5057,8 @@ pub mod tests {
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank0.freeze();
 
-        let bank1_child = Bank::new_from_parent(bank0.clone(), SlotLeader::new_unique(), 1);
+        let bank1_child =
+            Bank::new_from_parent_for_tests(bank0.clone(), SlotLeader::new_unique(), 1);
         let bank1 = bank_forks
             .write()
             .unwrap()
@@ -5896,7 +5904,7 @@ pub mod tests {
         assert_eq!(slot_0_bank.get_hash_age(&genesis_hash), Some(1));
         assert_eq!(slot_0_bank.get_hash_age(&slot_0_hash), Some(0));
 
-        let new_bank = Bank::new_from_parent(slot_0_bank, leader, 2);
+        let new_bank = Bank::new_from_parent_for_tests(slot_0_bank, leader, 2);
         let slot_2_bank = bank_forks
             .write()
             .unwrap()
@@ -6087,7 +6095,7 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+        let bank1 = Bank::new_from_parent_for_tests(bank0.clone(), SlotLeader::default(), 1);
         assert!(
             !bank1
                 .feature_set
@@ -6123,7 +6131,7 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let mut bank1 = Bank::new_from_parent(bank0.clone(), SlotLeader::default(), 1);
+        let mut bank1 = Bank::new_from_parent_for_tests(bank0.clone(), SlotLeader::default(), 1);
         bank1.activate_feature(&agave_feature_set::alpenglow::id());
         assert!(
             bank1
@@ -6245,7 +6253,8 @@ pub mod tests {
             .expect("parent should have a merkle root");
 
         // Case 1: No shreds for child slot — should return Unavailable
-        let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 10);
+        let child_bank =
+            Bank::new_from_parent_for_tests(parent_bank.clone(), SlotLeader::default(), 10);
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank),
             ChainedBlockIdCheck::Unavailable
@@ -6254,7 +6263,8 @@ pub mod tests {
         // Case 2: Chained merkle root matches parent block ID — should return
         // Pass
         insert_shreds_with_chained_merkle_root(11, 0, parent_block_id);
-        let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 11);
+        let child_bank =
+            Bank::new_from_parent_for_tests(parent_bank.clone(), SlotLeader::default(), 11);
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank),
             ChainedBlockIdCheck::Pass
@@ -6263,7 +6273,8 @@ pub mod tests {
         // Case 3: Chained merkle root does NOT match parent block ID — should
         // return Mismatch
         insert_shreds_with_chained_merkle_root(12, 0, Hash::new_unique());
-        let child_bank = Bank::new_from_parent(parent_bank.clone(), SlotLeader::default(), 12);
+        let child_bank =
+            Bank::new_from_parent_for_tests(parent_bank.clone(), SlotLeader::default(), 12);
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank),
             ChainedBlockIdCheck::Mismatch
@@ -6271,13 +6282,14 @@ pub mod tests {
 
         // Case 4: Parent has no shreds (get_block_merkle_root returns Err) —
         // should return Pass regardless of chained merkle root.
-        let no_shreds_parent_bank = Arc::new(Bank::new_from_parent(
+        let no_shreds_parent_bank = Arc::new(Bank::new_from_parent_for_tests(
             parent_bank,
             SlotLeader::default(),
             20,
         ));
         insert_shreds_with_chained_merkle_root(21, 20, Hash::new_unique());
-        let child_bank = Bank::new_from_parent(no_shreds_parent_bank, SlotLeader::default(), 21);
+        let child_bank =
+            Bank::new_from_parent_for_tests(no_shreds_parent_bank, SlotLeader::default(), 21);
         assert!(matches!(
             check_chained_block_id(&blockstore, &child_bank),
             ChainedBlockIdCheck::Pass

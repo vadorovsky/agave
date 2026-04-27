@@ -191,7 +191,7 @@ mod tests {
         let mut epoch_specs = EpochSpecs::from(bank_forks.clone());
         for slot in 1..100 {
             let bank = bank_forks.read().unwrap().get(slot - 1).unwrap();
-            let bank = Bank::new_from_parent(bank, SlotLeader::new_unique(), slot);
+            let bank = Bank::new_from_parent_for_tests(bank, SlotLeader::new_unique(), slot);
             bank_forks.write().unwrap().insert(bank);
         }
 

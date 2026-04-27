@@ -209,7 +209,7 @@ mod tests {
         let (bank0, _bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         bank0.squash();
-        let mut bank = Bank::new_from_parent(bank0.clone(), *bank0.leader(), 1);
+        let mut bank = Bank::new_from_parent_for_tests(bank0.clone(), *bank0.leader(), 1);
         bank.set_block_id(Some(Hash::default()));
         bank.freeze();
         add_root_and_flush_write_cache(&bank0);
@@ -293,7 +293,7 @@ mod tests {
         let (bank0, _bank_forks) =
             Bank::new_for_tests(&genesis_config).wrap_with_bank_forks_for_tests();
         let bank0_leader = *bank0.leader();
-        let mut bank = Bank::new_from_parent(bank0, bank0_leader, 1);
+        let mut bank = Bank::new_from_parent_for_tests(bank0, bank0_leader, 1);
         while !bank.is_complete() {
             bank.fill_bank_with_ticks_for_tests();
         }

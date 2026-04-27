@@ -1829,7 +1829,11 @@ mod tests {
         for _ in 1..bank.get_epoch_rewards_sysvar().num_partitions {
             assert!(bank.get_epoch_rewards_sysvar().active);
             let new_slot = bank.slot() + 1;
-            bank = Arc::new(Bank::new_from_parent(bank, SlotLeader::default(), new_slot));
+            bank = Arc::new(Bank::new_from_parent_for_tests(
+                bank,
+                SlotLeader::default(),
+                new_slot,
+            ));
         }
 
         assert!(!bank.get_epoch_rewards_sysvar().active);
@@ -1853,7 +1857,7 @@ mod tests {
         // Advance to next epoch boundary to update EpochStakes Kludgy because
         // mutable Bank methods require the bank not be Arc-wrapped.
         let new_slot = bank.slot() + 1;
-        let mut bank = Bank::new_from_parent(bank, SlotLeader::default(), new_slot);
+        let mut bank = Bank::new_from_parent_for_tests(bank, SlotLeader::default(), new_slot);
         let expected_starting_block_height = bank.block_height() + 1;
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
@@ -1918,8 +1922,11 @@ mod tests {
         assert_eq!(point_value.rewards, sysvar.total_rewards);
 
         // Advance to first distribution slot (bank_forks kept in scope so parent has fork_graph)
-        let mut bank =
-            Bank::new_from_parent(Arc::new(bank), SlotLeader::default(), SLOTS_PER_EPOCH + 1);
+        let mut bank = Bank::new_from_parent_for_tests(
+            Arc::new(bank),
+            SlotLeader::default(),
+            SLOTS_PER_EPOCH + 1,
+        );
 
         bank.recalculate_partitioned_rewards_if_active(|| &thread_pool);
         let EpochRewardStatus::Active(EpochRewardPhase::Distribution(
@@ -1965,7 +1972,8 @@ mod tests {
         for _ in 1..bank.get_epoch_rewards_sysvar().num_partitions {
             assert!(bank.get_epoch_rewards_sysvar().active);
             let next_slot = bank.slot() + 1;
-            bank = Bank::new_from_parent(Arc::new(bank), SlotLeader::default(), next_slot);
+            bank =
+                Bank::new_from_parent_for_tests(Arc::new(bank), SlotLeader::default(), next_slot);
             bank.recalculate_partitioned_rewards_if_active(|| &thread_pool);
         }
 
@@ -1991,7 +1999,7 @@ mod tests {
 
         // Advance to next epoch boundary (bank_forks kept in scope so parent has fork_graph)
         let new_slot = bank.slot() + 1;
-        let mut bank = Bank::new_from_parent(bank, SlotLeader::default(), new_slot);
+        let mut bank = Bank::new_from_parent_for_tests(bank, SlotLeader::default(), new_slot);
 
         let EpochRewardStatus::Active(EpochRewardPhase::Calculation(calculation_status)) =
             bank.epoch_reward_status.clone()
@@ -2056,7 +2064,7 @@ mod tests {
         // Advance to the epoch boundary, which computes the original in-memory
         // reward list and updates EpochStakes for the new epoch.
         let new_slot = bank.slot() + 1;
-        let mut bank = Bank::new_from_parent(bank, SlotLeader::default(), new_slot);
+        let mut bank = Bank::new_from_parent_for_tests(bank, SlotLeader::default(), new_slot);
 
         let leader_schedule_epoch = bank.epoch_schedule().get_leader_schedule_epoch(bank.slot());
         let filtered_epoch_vote_accounts = bank
@@ -2302,7 +2310,7 @@ mod tests {
         }
 
         // Use new_from_parent (not _with_bank_forks) - we can't insert two banks at same slot
-        let bank_fork2 = Arc::new(Bank::new_from_parent(
+        let bank_fork2 = Arc::new(Bank::new_from_parent_for_tests(
             bank.clone(),
             SlotLeader::default(),
             next_epoch_slot,
@@ -2427,7 +2435,7 @@ mod tests {
         add_voters_and_populate(&bank1, &mut voters, &mut stakers, 5, 5_000_000_000, 10);
         let parent_capitalization = bank1.capitalization();
 
-        let bank2 = Arc::new(Bank::new_from_parent(
+        let bank2 = Arc::new(Bank::new_from_parent_for_tests(
             Arc::clone(&bank1),
             SlotLeader::default(),
             SLOTS_PER_EPOCH * 2,
@@ -2448,7 +2456,7 @@ mod tests {
         add_voters_and_populate(&bank2, &mut voters, &mut stakers, 10, 8_000_000_000, 10);
         let parent_capitalization = bank2.capitalization();
 
-        let bank3 = Arc::new(Bank::new_from_parent(
+        let bank3 = Arc::new(Bank::new_from_parent_for_tests(
             Arc::clone(&bank2),
             SlotLeader::default(),
             SLOTS_PER_EPOCH * 3,

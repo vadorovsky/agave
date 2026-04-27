@@ -693,7 +693,7 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_runtime::{
-            bank::{Bank, NewBankOptions, SlotLeader},
+            bank::{Bank, SlotLeader},
             bank_forks::BankForks,
             genesis_utils::{
                 ValidatorVoteKeypairs, create_genesis_config_with_alpenglow_vote_accounts,
@@ -784,7 +784,7 @@ mod tests {
     }
 
     fn create_bank(slot: Slot, parent: Arc<Bank>, leader: SlotLeader) -> Bank {
-        Bank::new_from_parent_with_options(parent, leader, slot, NewBankOptions::default())
+        Bank::new_from_parent_for_tests(parent, leader, slot)
     }
 
     fn create_bank_forks(validator_keypairs: &[ValidatorVoteKeypairs]) -> Arc<RwLock<BankForks>> {

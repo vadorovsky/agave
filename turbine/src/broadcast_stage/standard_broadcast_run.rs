@@ -687,7 +687,11 @@ mod test {
         let (blockstore, genesis_config, cluster_info, bank0, leader_keypair, socket, bank_forks) =
             setup(num_shreds_per_slot);
 
-        let bank1 = Arc::new(Bank::new_from_parent(bank0.clone(), *bank0.leader(), 1));
+        let bank1 = Arc::new(Bank::new_from_parent_for_tests(
+            bank0.clone(),
+            *bank0.leader(),
+            1,
+        ));
 
         // Insert 1 less than the number of ticks needed to finish the slot
         let ticks0 = create_ticks(genesis_config.ticks_per_slot - 1, 0, genesis_config.hash());
@@ -761,7 +765,7 @@ mod test {
 
         // Step 2: Make a transmission for another bank that interrupts the transmission for
         // slot 1
-        let bank2 = Arc::new(Bank::new_from_parent(bank1, *bank0.leader(), 2));
+        let bank2 = Arc::new(Bank::new_from_parent_for_tests(bank1, *bank0.leader(), 2));
         let interrupted_slot = standard_broadcast_run.slot;
         // Interrupting the slot should cause the unfinished_slot and stats to reset
         let num_shreds = 1;

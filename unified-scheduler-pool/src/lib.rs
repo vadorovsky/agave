@@ -3087,7 +3087,7 @@ mod tests {
         assert_eq!(bank.transaction_count(), expected_transaction_count.0);
 
         // Create new bank to observe behavior difference around session ending
-        let bank = Arc::new(Bank::new_from_parent(
+        let bank = Arc::new(Bank::new_from_parent_for_tests(
             bank.clone_without_scheduler(),
             SlotLeader::default(),
             bank.slot().checked_add(1).unwrap(),
@@ -3134,7 +3134,7 @@ mod tests {
         // Create two banks for two contexts
         let bank0 = Bank::new_for_tests(&genesis_config);
         let (bank0, _bank_forks) = setup_dummy_fork_graph(bank0);
-        let bank1 = Arc::new(Bank::new_from_parent(
+        let bank1 = Arc::new(Bank::new_from_parent_for_tests(
             bank0.clone(),
             SlotLeader::default(),
             bank0.slot().checked_add(1).unwrap(),
@@ -3352,7 +3352,7 @@ mod tests {
             bank.fill_bank_with_ticks_for_tests();
             bank.freeze();
             let slot = bank.slot();
-            bank = Arc::new(Bank::new_from_parent(
+            bank = Arc::new(Bank::new_from_parent_for_tests(
                 bank,
                 SlotLeader::default(),
                 slot.checked_add(1).unwrap(),

@@ -323,7 +323,7 @@ mod tests {
         assert_eq!(message.latest_blockhash, bank.last_blockhash().to_bytes());
 
         // Child bank past the first epoch boundary - epoch should advance.
-        let child_bank = Arc::new(Bank::new_from_parent(
+        let child_bank = Arc::new(Bank::new_from_parent_for_tests(
             bank,
             SlotLeader::new_unique(),
             MINIMUM_SLOTS_PER_EPOCH,

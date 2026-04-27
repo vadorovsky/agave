@@ -1175,7 +1175,7 @@ mod tests {
         let mut total_staking_rewards = 0;
         let mut previous_bank = epoch_boundary_bank;
         for partition_index in 0..expected_num_partitions {
-            let partition_bank = Arc::new(Bank::new_from_parent(
+            let partition_bank = Arc::new(Bank::new_from_parent_for_tests(
                 previous_bank,
                 SlotLeader::default(),
                 SLOTS_PER_EPOCH + partition_index + 1,
@@ -1197,7 +1197,7 @@ mod tests {
 
         // All rewards are recorded
         assert_eq!(total_staking_rewards, num_rewards);
-        let bank = Bank::new_from_parent(
+        let bank = Bank::new_from_parent_for_tests(
             previous_bank,
             SlotLeader::default(),
             SLOTS_PER_EPOCH + expected_num_partitions + 1,

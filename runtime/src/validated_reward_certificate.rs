@@ -219,7 +219,7 @@ mod tests {
         );
         let (bank, _bank_forks) =
             Bank::new_for_tests(&genesis.genesis_config).wrap_with_bank_forks_for_tests();
-        let bank = Bank::new_from_parent(bank, SlotLeader::default(), bank_slot);
+        let bank = Bank::new_from_parent_for_tests(bank, SlotLeader::default(), bank_slot);
 
         let rank_map = bank
             .epoch_stakes_from_slot(reward_slot)

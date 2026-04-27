@@ -8945,13 +8945,13 @@ pub mod tests {
 
         let bank_forks = BankForks::new_rw_arc(bank);
         let bank0 = bank_forks.read().unwrap().get(0).unwrap();
-        let bank1 = Bank::new_from_parent(bank0, SlotLeader::default(), 1);
+        let bank1 = Bank::new_from_parent_for_tests(bank0, SlotLeader::default(), 1);
         bank_forks.write().unwrap().insert(bank1);
         let bank1 = bank_forks.read().unwrap().get(1).unwrap();
-        let bank2 = Bank::new_from_parent(bank1, SlotLeader::default(), 2);
+        let bank2 = Bank::new_from_parent_for_tests(bank1, SlotLeader::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
-        let bank3 = Bank::new_from_parent(bank2, SlotLeader::default(), 3);
+        let bank3 = Bank::new_from_parent_for_tests(bank2, SlotLeader::default(), 3);
         bank_forks.write().unwrap().insert(bank3);
 
         let prioritization_fee_cache_inner = None;

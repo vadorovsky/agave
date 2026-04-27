@@ -285,7 +285,7 @@ mod tests {
         let bank_forks_arc = BankForks::new_rw_arc(bank);
         {
             let bank0 = bank_forks_arc.read().unwrap().get(0).unwrap();
-            let bank9 = Bank::new_from_parent(bank0, SlotLeader::default(), 9);
+            let bank9 = Bank::new_from_parent_for_tests(bank0, SlotLeader::default(), 9);
             let mut bank_forks = bank_forks_arc.write().unwrap();
             bank_forks.insert(bank9);
             bank_forks.set_root(9, None, None);
@@ -389,7 +389,7 @@ mod tests {
         let bank_forks_arc = BankForks::new_rw_arc(bank);
         {
             let bank0 = bank_forks_arc.read().unwrap().get(0).unwrap();
-            let bank9 = Bank::new_from_parent(bank0, SlotLeader::default(), 9);
+            let bank9 = Bank::new_from_parent_for_tests(bank0, SlotLeader::default(), 9);
             let mut bank_forks = bank_forks_arc.write().unwrap();
             bank_forks.insert(bank9);
             bank_forks.set_root(9, None, None);

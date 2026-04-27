@@ -1267,7 +1267,7 @@ mod tests {
         );
         let bank0 = Bank::new_for_tests(&genesis.genesis_config);
         let (bank0, _temp_bank_forks) = bank0.wrap_with_bank_forks_for_tests();
-        let bank5 = Bank::new_from_parent(bank0, SlotLeader::default(), 5);
+        let bank5 = Bank::new_from_parent_for_tests(bank0, SlotLeader::default(), 5);
         let bank_forks = BankForks::new_rw_arc(bank5);
 
         bank_forks.write().unwrap().set_root(5, None, None);

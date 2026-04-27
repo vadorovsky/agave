@@ -538,7 +538,8 @@ mod tests {
             target_slot += 1;
         }
 
-        let child_bank = Bank::new_from_parent(bank.clone(), SlotLeader::default(), target_slot);
+        let child_bank =
+            Bank::new_from_parent_for_tests(bank.clone(), SlotLeader::default(), target_slot);
         let bank = bank_forks
             .write()
             .unwrap()
