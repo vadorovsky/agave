@@ -45,23 +45,12 @@ struct FrontierEntry {
     stake_account: Arc<StakeAccount>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub(crate) struct FrontierStakeDelegations {
-    entries: Vec<FrontierEntry>,
-}
-
 #[derive(Debug)]
 pub(crate) struct FrontierQuery<'a> {
     inner: RwLockReadGuard<'a, StakeDelegationIndexInner>,
     visible_root_indices: Vec<usize>,
     overlay: HashMap<Pubkey, Option<Arc<StakeAccount>>>,
     overlay_only_inserts: Vec<FrontierEntry>,
-}
-
-impl FrontierStakeDelegations {
-    pub(crate) fn ordered_pubkeys(&self) -> impl Iterator<Item = &Pubkey> {
-        self.entries.iter().map(|entry| &entry.stake_pubkey)
-    }
 }
 
 impl<'a> FrontierQuery<'a> {
@@ -191,54 +180,6 @@ impl StakeDelegationIndex {
             .insert(*stake_pubkey, None);
     }
 
-    pub(crate) fn frontier_snapshot(
-        &self,
-        fork_ids_in_ancestor_order: &[StakeDelegationForkId],
-    ) -> FrontierStakeDelegations {
-        let inner = self.inner.read().unwrap();
-        let mut overlay = HashMap::new();
-        for fork_id in fork_ids_in_ancestor_order {
-            if let Some(delta) = inner.forks.get(fork_id) {
-                for (stake_pubkey, stake_account) in delta.changes.iter() {
-                    overlay.insert(*stake_pubkey, stake_account.clone());
-                }
-            }
-        }
-
-        let mut entries =
-            Vec::with_capacity(inner.root_positions.len().saturating_add(overlay.len()));
-        for root_entry in inner.root_entries.iter().flatten() {
-            match overlay.remove(&root_entry.stake_pubkey) {
-                Some(Some(stake_account)) => entries.push(FrontierEntry {
-                    stake_pubkey: root_entry.stake_pubkey,
-                    stake_account,
-                }),
-                Some(None) => {}
-                None => entries.push(FrontierEntry {
-                    stake_pubkey: root_entry.stake_pubkey,
-                    stake_account: Arc::clone(&root_entry.stake_account),
-                }),
-            }
-        }
-
-        let mut inserts = overlay
-            .into_iter()
-            .filter_map(|(stake_pubkey, maybe_stake_account)| {
-                if inner.root_positions.contains_key(&stake_pubkey) {
-                    return None;
-                }
-                maybe_stake_account.map(|stake_account| FrontierEntry {
-                    stake_pubkey,
-                    stake_account,
-                })
-            })
-            .collect::<Vec<_>>();
-        inserts.sort_unstable_by_key(|entry| entry.stake_pubkey);
-        entries.extend(inserts);
-
-        FrontierStakeDelegations { entries }
-    }
-
     pub(crate) fn frontier_query(
         &self,
         fork_ids_in_ancestor_order: &[StakeDelegationForkId],
@@ -331,7 +272,7 @@ mod tests {
     };
 
     #[test]
-    fn test_frontier_snapshot_overlays_root_and_deltas() {
+    fn test_frontier_query_overlays_root_and_deltas() {
         let rent = Rent::default();
         let vote_pubkey_a = new_rand();
         let vote_pubkey_b = new_rand();
@@ -363,12 +304,9 @@ mod tests {
             StakeAccount::try_from(inserted_account_c).unwrap(),
         );
 
-        let snapshot = index.frontier_snapshot(&[fork]);
-        let stake_delegations = snapshot
-            .entries
-            .iter()
-            .map(|entry| (&entry.stake_pubkey, entry.stake_account.as_ref()))
-            .collect::<Vec<_>>();
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let frontier_query = index.frontier_query(&[fork]);
+        let stake_delegations = thread_pool.install(|| frontier_query.par_iter().collect::<Vec<_>>());
         assert_eq!(stake_delegations.len(), 2);
         assert!(stake_delegations.iter().any(|(pubkey, account)| {
             **pubkey == stake_pubkey_a && account.delegation().stake == 30
@@ -379,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn test_frontier_query_matches_snapshot_order() {
+    fn test_frontier_query_preserves_root_and_insert_order() {
         let rent = Rent::default();
         let vote_pubkey_a = new_rand();
         let vote_pubkey_b = new_rand();
@@ -411,15 +349,17 @@ mod tests {
             StakeAccount::try_from(inserted_account_c).unwrap(),
         );
 
-        let snapshot = index.frontier_snapshot(&[fork]);
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let frontier_query = index.frontier_query(&[fork]);
-        let query_entries = thread_pool.install(|| frontier_query.par_iter().collect::<Vec<_>>());
-        let snapshot_entries = snapshot
-            .entries
-            .iter()
-            .map(|entry| (&entry.stake_pubkey, entry.stake_account.as_ref()))
-            .collect::<Vec<_>>();
-        assert_eq!(query_entries, snapshot_entries);
+        let query_entries = thread_pool.install(|| {
+            frontier_query
+                .par_iter()
+                .map(|(pubkey, stake_account)| (*pubkey, stake_account.delegation().stake))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            query_entries,
+            vec![(stake_pubkey_a, 30), (stake_pubkey_c, 40)]
+        );
     }
 }

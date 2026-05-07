@@ -3,9 +3,7 @@
 use {
     crate::{
         stake_account,
-        stake_delegation_index::{
-            FrontierQuery, FrontierStakeDelegations, StakeDelegationForkId, StakeDelegationIndex,
-        },
+        stake_delegation_index::{FrontierQuery, StakeDelegationForkId, StakeDelegationIndex},
         stake_history::StakeHistory,
     },
     imbl::HashMap as ImblHashMap,
@@ -103,14 +101,6 @@ impl StakesCache {
 
     pub(crate) fn stake_delegation_fork_id(&self) -> Option<StakeDelegationForkId> {
         self.stake_delegation_fork_id
-    }
-
-    pub(crate) fn frontier_stake_delegations(
-        &self,
-        fork_ids_in_ancestor_order: &[StakeDelegationForkId],
-    ) -> FrontierStakeDelegations {
-        self.stake_delegation_index
-            .frontier_snapshot(fork_ids_in_ancestor_order)
     }
 
     pub(crate) fn frontier_query(
@@ -545,21 +535,6 @@ impl Stakes<StakeAccount> {
                 }
             }
         }
-    }
-
-    /// Returns a reference to the map of stake delegations.
-    ///
-    /// # Performance
-    ///
-    /// `[imbl::HashMap]` is a [hash array mapped trie (HAMT)][hamt], which means
-    /// that inserts, deletions and lookups are average-case O(1) and
-    /// worst-case O(log n). However, the performance of iterations is poor due
-    /// to depth-first traversal and jumps. Currently it's also impossible to
-    /// iterate over it with [`rayon`].
-    ///
-    /// [hamt]: https://en.wikipedia.org/wiki/Hash_array_mapped_trie
-    pub(crate) fn stake_delegations(&self) -> &ImblHashMap<Pubkey, StakeAccount> {
-        &self.stake_delegations
     }
 
     pub(crate) fn highest_staked_node(&self) -> Option<SlotLeader> {

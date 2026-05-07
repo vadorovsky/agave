@@ -2766,19 +2766,6 @@ impl Bank {
         }
     }
 
-    fn stake_delegation_frontier_snapshot(
-        &self,
-    ) -> crate::stake_delegation_index::FrontierStakeDelegations {
-        let fork_ids = self
-            .parents()
-            .into_iter()
-            .rev()
-            .filter_map(|bank| bank.stakes_cache.stake_delegation_fork_id())
-            .chain(self.stakes_cache.stake_delegation_fork_id())
-            .collect::<Vec<_>>();
-        self.stakes_cache.frontier_stake_delegations(&fork_ids)
-    }
-
     fn stake_delegation_frontier_query(
         &self,
     ) -> crate::stake_delegation_index::FrontierQuery<'_> {

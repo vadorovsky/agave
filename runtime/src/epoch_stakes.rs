@@ -732,7 +732,7 @@ pub(crate) mod tests {
         );
 
         // ensure stake delegations start off *not* empty
-        assert!(!stakes.stake_delegations().is_empty());
+        assert!(!stakes.stake_delegations.is_empty());
 
         let epoch_stakes = VersionedEpochStakes::new(SerdeStakesToStakeFormat::Account(stakes), 0);
 

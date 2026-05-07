@@ -31,10 +31,7 @@ use {
     solana_reward_info::RewardType,
     solana_stake_interface::{stake_history::StakeHistory, state::Delegation},
     solana_sysvar::epoch_rewards::EpochRewards,
-    std::{
-        collections::HashMap,
-        sync::{Arc, atomic::Ordering::Relaxed},
-    },
+    std::sync::{Arc, atomic::Ordering::Relaxed},
 };
 
 #[derive(Debug)]
@@ -394,16 +391,6 @@ impl Bank {
         })
     }
 
-    pub(in crate::bank) fn filter_stake_delegations<'a>(
-        &self,
-        stake_delegations: Vec<(&'a Pubkey, &'a StakeAccount<Delegation>)>,
-    ) -> FilteredStakeDelegations<'a> {
-        self.filtered_stake_delegations(FilteredStakeDelegations::from_vec(
-            stake_delegations,
-            None,
-        ))
-    }
-
     pub(in crate::bank) fn filter_frontier_query_stake_delegations<'a>(
         &self,
         stake_delegations: FrontierQuery<'a>,
@@ -441,23 +428,8 @@ impl Bank {
     ) -> EpochRewardCalculateParamInfo<'a> {
         // Use `stakes` for stake-related info
         let stake_history = stakes.history().clone();
-        let stake_delegation_frontier = self.stake_delegation_frontier_snapshot();
-        let stake_delegations_by_pubkey = stakes
-            .stake_delegations()
-            .iter()
-            .map(|(stake_pubkey, stake_account)| (*stake_pubkey, (stake_pubkey, stake_account)))
-            .collect::<HashMap<_, _>>();
-        let stake_delegations = stake_delegation_frontier
-            .ordered_pubkeys()
-            .copied()
-            .map(|stake_pubkey| {
-                stake_delegations_by_pubkey
-                    .get(&stake_pubkey)
-                    .copied()
-                    .expect("frontier snapshot must match bank stakes")
-            })
-            .collect();
-        let stake_delegations = self.filter_stake_delegations(stake_delegations);
+        let stake_delegations =
+            self.filter_frontier_query_stake_delegations(self.stake_delegation_frontier_query());
 
         // Use the vote-account snapshot from epoch_stakes, which is VAT-filtered
         // when admission filtering is enabled. Recalculation should match the

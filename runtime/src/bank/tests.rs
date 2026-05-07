@@ -619,9 +619,8 @@ impl Bank {
         thread_pool: &ThreadPool,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
     ) -> StakeDelegationsMap {
-        let stakes = self.stakes_cache.stakes();
-        let stake_delegations = stakes.stake_delegations().iter().collect::<Vec<_>>();
-        let stake_delegations = self.filter_stake_delegations(stake_delegations);
+        let stake_delegations =
+            self.filter_frontier_query_stake_delegations(self.stake_delegation_frontier_query());
         // Obtain all unique voter pubkeys from stake delegations.
         fn merge(mut acc: HashSet<Pubkey>, other: HashSet<Pubkey>) -> HashSet<Pubkey> {
             if acc.len() < other.len() {
@@ -644,6 +643,7 @@ impl Bank {
                 .reduce(HashSet::default, merge)
         });
         // Obtain vote-accounts for unique voter pubkeys.
+        let stakes = self.stakes_cache.stakes();
         let cached_vote_accounts = stakes.vote_accounts();
         let solana_vote_program: Pubkey = solana_vote_program::id();
         let vote_accounts_cache_miss_count = AtomicUsize::default();
@@ -3183,8 +3183,8 @@ fn test_bank_cloned_stake_delegations() {
     bank.squash();
     let bank = Bank::new_from_parent(bank, SlotLeader::new_unique(), 1);
 
-    let stake_delegations = bank.stakes_cache.stakes().stake_delegations().clone();
-    assert_eq!(stake_delegations.len(), 1); // bootstrap validator has
+    let stake_delegation_frontier = bank.stake_delegation_frontier_query();
+    assert_eq!(stake_delegation_frontier.len(), 1); // bootstrap validator has
     // to have a stake delegation
 
     let (vote_balance, stake_balance) = {
@@ -3236,9 +3236,9 @@ fn test_bank_cloned_stake_delegations() {
 
     bank.process_transaction(&transaction).unwrap();
 
-    let stake_delegations = bank.stakes_cache.stakes().stake_delegations().clone();
-    assert_eq!(stake_delegations.len(), 2);
-    assert!(stake_delegations.get(&stake_keypair.pubkey()).is_some());
+    let stake_delegation_frontier = bank.stake_delegation_frontier_query();
+    assert_eq!(stake_delegation_frontier.len(), 2);
+    assert!(stake_delegation_frontier.get(&stake_keypair.pubkey()).is_some());
 }
 
 #[test]
@@ -3592,7 +3592,7 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
             let stakes = bank.stakes_cache.stakes();
             assert!(stakes.vote_accounts().as_ref().is_empty());
         }
-        assert!(bank.stakes_cache.stakes().stake_delegations().is_empty());
+        assert_eq!(bank.stake_delegation_frontier_query().len(), 0);
         if pass == 0 {
             add_root_and_flush_write_cache(&bank);
             assert_eq!(
@@ -3612,7 +3612,7 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
             let stakes = bank.stakes_cache.stakes();
             assert!(!stakes.vote_accounts().as_ref().is_empty());
         }
-        assert!(!bank.stakes_cache.stakes().stake_delegations().is_empty());
+        assert_ne!(bank.stake_delegation_frontier_query().len(), 0);
         if pass == 1 {
             add_root_and_flush_write_cache(&bank);
             assert_eq!(
@@ -3636,7 +3636,7 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
             let stakes = bank.stakes_cache.stakes();
             assert!(stakes.vote_accounts().as_ref().is_empty());
         }
-        assert!(bank.stakes_cache.stakes().stake_delegations().is_empty());
+        assert_eq!(bank.stake_delegation_frontier_query().len(), 0);
         if pass == 2 {
             add_root_and_flush_write_cache(&bank);
             assert_eq!(
@@ -3665,7 +3665,7 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
             let stakes = bank.stakes_cache.stakes();
             assert!(stakes.vote_accounts().as_ref().is_empty());
         }
-        assert!(bank.stakes_cache.stakes().stake_delegations().is_empty());
+        assert_eq!(bank.stake_delegation_frontier_query().len(), 0);
         assert_eq!(
             bank.calculate_capitalization_for_tests(),
             bank.capitalization()
