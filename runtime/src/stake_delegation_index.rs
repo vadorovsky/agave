@@ -69,6 +69,19 @@ impl<'a> FrontierQuery<'a> {
         self.visible_root_indices.len() + self.overlay_only_inserts.len()
     }
 
+    pub(crate) fn get(&'a self, stake_pubkey: &Pubkey) -> Option<&'a StakeAccount> {
+        match self.overlay.get(stake_pubkey) {
+            Some(Some(stake_account)) => Some(stake_account.as_ref()),
+            Some(None) => None,
+            None => self
+                .inner
+                .root_positions
+                .get(stake_pubkey)
+                .and_then(|root_index| self.inner.root_entries[*root_index].as_ref())
+                .map(|root_entry| root_entry.stake_account.as_ref()),
+        }
+    }
+
     pub(crate) fn par_iter(
         &'a self,
     ) -> impl IndexedParallelIterator<Item = (&'a Pubkey, &'a StakeAccount)> {

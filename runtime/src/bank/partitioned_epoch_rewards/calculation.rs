@@ -31,7 +31,10 @@ use {
     solana_reward_info::RewardType,
     solana_stake_interface::{stake_history::StakeHistory, state::Delegation},
     solana_sysvar::epoch_rewards::EpochRewards,
-    std::sync::{Arc, atomic::Ordering::Relaxed},
+    std::{
+        collections::HashMap,
+        sync::{Arc, atomic::Ordering::Relaxed},
+    },
 };
 
 #[derive(Debug)]
@@ -256,8 +259,9 @@ impl Bank {
             let stakes = self.stakes_cache.stakes();
             let filtered_vote_accounts =
                 self.maybe_filter_vote_accounts_for_vat(stakes.vote_accounts());
+            drop(stakes);
             (
-                stakes.stake_delegations().len(),
+                self.stake_delegation_frontier_query().len(),
                 filtered_vote_accounts.len(),
             )
         };
