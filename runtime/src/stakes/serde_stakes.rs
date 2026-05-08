@@ -199,11 +199,20 @@ mod tests {
         crate::{stake_utils, stakes::StakesCache},
         rand::Rng,
         serde::Deserialize,
+        solana_account::ReadableAccount,
         solana_rent::Rent,
         solana_stake_interface::state::Delegation,
         solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         solana_vote_program::vote_state,
     };
+
+    fn check_and_store(
+        stakes_cache: &StakesCache,
+        pubkey: &Pubkey,
+        account: &impl ReadableAccount,
+    ) {
+        stakes_cache.check_and_store(pubkey, account, None, &[]);
+    }
 
     #[test]
     fn test_serde_stakes_to_stake_format() {
@@ -288,7 +297,7 @@ mod tests {
                 &node_pubkey,
                 rng.random_range(0..1_000_000), // lamports
             );
-            stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
+            check_and_store(&stakes_cache, &vote_pubkey, &vote_account);
             for _ in 0..rng.random_range(10usize..20) {
                 let stake_pubkey = solana_pubkey::new_rand();
                 let rent = Rent::free();
@@ -299,7 +308,7 @@ mod tests {
                     &rent,
                     rng.random_range(0..1_000_000), // lamports
                 );
-                stakes_cache.check_and_store(&stake_pubkey, &stake_account, None);
+                check_and_store(&stakes_cache, &stake_pubkey, &stake_account);
             }
         }
         let stakes: Stakes<StakeAccount> = stakes_cache.stakes().clone();

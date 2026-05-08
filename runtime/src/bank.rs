@@ -57,6 +57,7 @@ use {
         reward_info::RewardInfo,
         runtime_config::RuntimeConfig,
         stake_account::StakeAccount,
+        stake_delegation_index::StakeDelegationForkId,
         stake_history::StakeHistory as CowStakeHistory,
         stake_weighted_timestamp::{
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
@@ -2766,16 +2767,19 @@ impl Bank {
         }
     }
 
-    fn stake_delegation_frontier_query(
-        &self,
-    ) -> crate::stake_delegation_index::FrontierQuery<'_> {
-        let fork_ids = self
-            .parents()
+    fn stake_delegation_fork_ids_in_ancestor_order(&self) -> Vec<StakeDelegationForkId> {
+        self.parents()
             .into_iter()
             .rev()
             .filter_map(|bank| bank.stakes_cache.stake_delegation_fork_id())
             .chain(self.stakes_cache.stake_delegation_fork_id())
-            .collect::<Vec<_>>();
+            .collect()
+    }
+
+    fn stake_delegation_frontier_query(
+        &self,
+    ) -> crate::stake_delegation_index::FrontierQuery<'_> {
+        let fork_ids = self.stake_delegation_fork_ids_in_ancestor_order();
         self.stakes_cache.frontier_query(&fork_ids)
     }
 
@@ -4323,6 +4327,7 @@ impl Bank {
         assert!(!self.freeze_started());
         let mut m = Measure::start("stakes_cache.check_and_store");
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
+        let stake_delegation_fork_ids = self.stake_delegation_fork_ids_in_ancestor_order();
 
         (0..accounts.len()).for_each(|i| {
             accounts.account(i, |account| {
@@ -4330,6 +4335,7 @@ impl Bank {
                     account.pubkey(),
                     &account,
                     new_warmup_cooldown_rate_epoch,
+                    &stake_delegation_fork_ids,
                 )
             })
         });
@@ -5252,6 +5258,7 @@ impl Bank {
     ) {
         debug_assert_eq!(txs.len(), processing_results.len());
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
+        let stake_delegation_fork_ids = self.stake_delegation_fork_ids_in_ancestor_order();
         txs.iter()
             .zip(processing_results)
             .filter_map(|(tx, processing_result)| {
@@ -5273,8 +5280,12 @@ impl Bank {
             .for_each(|(pubkey, account)| {
                 // note that this could get timed to: self.rc.accounts.accounts_db.stats.stakes_cache_check_and_store_us,
                 //  but this code path is captured separately in ExecuteTimingType::UpdateStakesCacheUs
-                self.stakes_cache
-                    .check_and_store(pubkey, account, new_warmup_cooldown_rate_epoch);
+                self.stakes_cache.check_and_store(
+                    pubkey,
+                    account,
+                    new_warmup_cooldown_rate_epoch,
+                    &stake_delegation_fork_ids,
+                );
             });
     }
 

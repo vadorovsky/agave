@@ -58,6 +58,27 @@ impl<'a> FrontierQuery<'a> {
         self.visible_root_indices.len() + self.overlay_only_inserts.len()
     }
 
+    pub(crate) fn iter(&'a self) -> impl Iterator<Item = (&'a Pubkey, &'a StakeAccount)> {
+        self.visible_root_indices
+            .iter()
+            .map(move |root_index| {
+                let root_entry = self.inner.root_entries[*root_index]
+                    .as_ref()
+                    .expect("visible rooted frontier entry must exist");
+                let stake_account = self
+                    .overlay
+                    .get(&root_entry.stake_pubkey)
+                    .and_then(|stake_account| stake_account.as_ref())
+                    .map_or(root_entry.stake_account.as_ref(), Arc::as_ref);
+                (&root_entry.stake_pubkey, stake_account)
+            })
+            .chain(
+                self.overlay_only_inserts
+                    .iter()
+                    .map(|entry| (&entry.stake_pubkey, entry.stake_account.as_ref())),
+            )
+    }
+
     pub(crate) fn get(&'a self, stake_pubkey: &Pubkey) -> Option<&'a StakeAccount> {
         match self.overlay.get(stake_pubkey) {
             Some(Some(stake_account)) => Some(stake_account.as_ref()),
