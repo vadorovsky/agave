@@ -337,12 +337,9 @@ struct AccountsLtHashUpdate {
     curr_account: Option<AccountSharedData>,
 }
 
-// brooks TODO: doc
-//│ 23 │/// The number of lt hash updates to batch up before sending to the async thread pool.                                      │    │
-//│ 24 │///                                                                                                                         │    │
-//│ 25 │/// The 14 KiB number is the current largest size of jemalloc's "small slab" bins,                                          │    │
-//│ 26 │/// which should help with reuse.                                                                                           │    │
-//│ 27 │const MAX_BATCH_SIZE: usize = 14 * 1024 / size_of::<AccountsLtHashUpdate>();                                                │    │
+/// The number of lt hash updates to batch up before sending to the async thread pool.
+///
+/// The 14 KiB number is the current largest size of jemalloc's "small slab" bins.
 const MAX_BATCHED_UPDATES_VEC_BYTES: usize = 14 * 1024;
 const MAX_BATCHED_UPDATES_PER_VEC: usize =
     MAX_BATCHED_UPDATES_VEC_BYTES / size_of::<AccountsLtHashUpdate>();
