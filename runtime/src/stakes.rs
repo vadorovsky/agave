@@ -1,11 +1,11 @@
 //! Stakes serve as a cache of stake and vote accounts to derive
 //! node stakes
 use {
-    crate::{stake_account, stake_history::StakeHistory},
+    crate::{bank::rewards_calculation_thread_pool, stake_account, stake_history::StakeHistory},
     imbl::HashMap as ImblHashMap,
     log::error,
     num_derive::ToPrimitive,
-    rayon::{ThreadPool, prelude::*},
+    rayon::prelude::*,
     serde::Serialize,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::utils::create_account_shared_data,
@@ -380,13 +380,12 @@ impl Stakes<StakeAccount> {
     pub(crate) fn calculate_activated_stake(
         &self,
         next_epoch: Epoch,
-        thread_pool: &ThreadPool,
         new_rate_activation_epoch: Option<Epoch>,
         stake_delegations: &[(&Pubkey, &StakeAccount)],
     ) -> (StakeHistory, VoteAccounts) {
         // Wrap up the prev epoch by adding new stake history entry for the
         // prev epoch.
-        let stake_history_entry = thread_pool.install(|| {
+        let stake_history_entry = rewards_calculation_thread_pool().install(|| {
             stake_delegations
                 .par_iter()
                 .fold(
@@ -407,7 +406,6 @@ impl Stakes<StakeAccount> {
         // Refresh the stake distribution of vote accounts for the next epoch,
         // using new stake history.
         let vote_accounts = refresh_vote_accounts(
-            thread_pool,
             next_epoch,
             &self.vote_accounts,
             stake_delegations,
@@ -614,7 +612,6 @@ impl From<Stakes<Stake>> for Stakes<Delegation> {
 }
 
 fn refresh_vote_accounts(
-    thread_pool: &ThreadPool,
     epoch: Epoch,
     vote_accounts: &VoteAccounts,
     stake_delegations: &[(&Pubkey, &StakeAccount)],
@@ -631,7 +628,7 @@ fn refresh_vote_accounts(
         }
         stakes
     }
-    let delegated_stakes = thread_pool.install(|| {
+    let delegated_stakes = rewards_calculation_thread_pool().install(|| {
         stake_delegations
             .par_iter()
             .fold(
@@ -662,7 +659,6 @@ pub(crate) mod tests {
     use {
         super::*,
         crate::stake_utils,
-        rayon::ThreadPoolBuilder,
         solana_account::WritableAccount,
         solana_pubkey::Pubkey,
         solana_rent::Rent,
@@ -1026,12 +1022,11 @@ pub(crate) mod tests {
                 stake.stake(stakes.epoch, &stakes.stake_history, None)
             );
         }
-        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let next_epoch = 3;
         let (stake_history, vote_accounts) = {
             let stakes = stakes_cache.stakes();
             let stake_delegations = stakes.stake_delegations_vec();
-            stakes.calculate_activated_stake(next_epoch, &thread_pool, None, &stake_delegations)
+            stakes.calculate_activated_stake(next_epoch, None, &stake_delegations)
         };
         stakes_cache.activate_epoch(next_epoch, stake_history, vote_accounts);
         {

@@ -1669,7 +1669,6 @@ impl Bank {
     /// activated stake from the last epoch.
     fn compute_new_epoch_caches_and_rewards(
         &self,
-        thread_pool: &ThreadPool,
         rewarded_epoch: Epoch,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         rewards_metrics: &mut RewardsMetrics,
@@ -1682,7 +1681,6 @@ impl Bank {
         let ((stake_history, vote_accounts), calculate_activated_stake_time_us) =
             measure_us!(stakes.calculate_activated_stake(
                 self.epoch(),
-                thread_pool,
                 self.new_warmup_cooldown_rate_epoch(),
                 &stake_delegations
             ));
@@ -1700,7 +1698,6 @@ impl Bank {
                 cached_vote_accounts,
                 rewarded_epoch,
                 reward_calc_tracer,
-                thread_pool,
                 rewards_metrics,
             ));
         NewEpochBundle {
@@ -1723,10 +1720,10 @@ impl Bank {
     ) {
         let epoch = self.epoch();
         let slot = self.slot();
-        let thread_pool = rewards_calculation_thread_pool();
 
         let (_, apply_feature_activations_time_us) = measure_us!(
-            thread_pool.install(|| { self.compute_and_apply_new_feature_activations() })
+            rewards_calculation_thread_pool()
+                .install(|| { self.compute_and_apply_new_feature_activations() })
         );
 
         let mut rewards_metrics = RewardsMetrics::default();
@@ -1737,7 +1734,6 @@ impl Bank {
             calculate_activated_stake_time_us,
             update_rewards_with_thread_pool_time_us,
         } = self.compute_new_epoch_caches_and_rewards(
-            thread_pool,
             parent_epoch,
             reward_calc_tracer,
             &mut rewards_metrics,
@@ -1760,7 +1756,6 @@ impl Bank {
                 parent_height,
                 &rewards_calculation,
                 &mut rewards_metrics,
-                thread_pool,
             ));
 
         // the vote reward account state should be created at the epoch boundary in which we
@@ -2122,7 +2117,7 @@ impl Bank {
         );
         assert_eq!(bank.epoch_schedule, genesis_config.epoch_schedule);
 
-        bank.initialize_after_snapshot_restore(rewards_calculation_thread_pool);
+        bank.initialize_after_snapshot_restore();
 
         datapoint_info!(
             "bank-new-from-fields",
@@ -5615,11 +5610,7 @@ impl Bank {
 
     /// Compute and apply all activated features, initialize the transaction
     /// processor, and recalculate partitioned rewards if needed
-    fn initialize_after_snapshot_restore<F, TP>(&mut self, rewards_thread_pool_builder: F)
-    where
-        F: FnOnce() -> TP,
-        TP: std::borrow::Borrow<ThreadPool>,
-    {
+    fn initialize_after_snapshot_restore(&mut self) {
         self.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(self.slot, self.epoch);
         if let Some(compute_budget) = &self.compute_budget {
@@ -5629,7 +5620,7 @@ impl Bank {
 
         self.compute_and_apply_features_after_snapshot_restore();
 
-        self.recalculate_partitioned_rewards_if_active(rewards_thread_pool_builder);
+        self.recalculate_partitioned_rewards_if_active();
 
         self.transaction_processor
             .fill_missing_sysvar_cache_entries(self);
@@ -6428,12 +6419,7 @@ impl Bank {
 
         // If booting mid-distribution, recalculate reward partitions from the
         // EpochRewards sysvar (mirrors initialize_after_snapshot_restore).
-        bank.recalculate_partitioned_rewards_if_active(|| {
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(1)
-                .build()
-                .expect("single-threaded rayon pool")
-        });
+        bank.recalculate_partitioned_rewards_if_active();
 
         bank.prepare_for_block_execution(
             parent_epoch,
