@@ -187,7 +187,9 @@ impl Bank {
 
 /// Struct for tracking progress of the asynchronous accounts lt hashing for a Bank.
 pub struct AccountsLtHashAsyncProgress {
-    accumulator: Arc<Mutex<AccountsLtHashAccumulator>>,
+    accumulators: Arc<[Mutex<AccountsLtHashAccumulator>; NUM_REPLAY_HASH_THREADS]>,
+    first_panic: Arc<Mutex<Option<PanicPayload>>>,
+    next_shard: AtomicUsize,
     num_jobs_pending: Arc<AtomicUsize>,
     state: Mutex<AsyncProgressState>,
 }
@@ -195,13 +197,16 @@ pub struct AccountsLtHashAsyncProgress {
 impl AccountsLtHashAsyncProgress {
     /// Creates a new AccountsLtHashAsyncProgress variable, which is suitable for a new Bank.
     pub fn new() -> Self {
-        let accumulator = AccountsLtHashAccumulator {
-            lt_hash: LtHash::identity(),
-            stats: UpdateStats::default(),
-            first_panic: None,
-        };
+        let accumulators = std::array::from_fn(|_| {
+            Mutex::new(AccountsLtHashAccumulator {
+                lt_hash: LtHash::identity(),
+                stats: UpdateStats::default(),
+            })
+        });
         Self {
-            accumulator: Arc::new(Mutex::new(accumulator)),
+            accumulators: Arc::new(accumulators),
+            first_panic: Arc::new(Mutex::new(None)),
+            next_shard: AtomicUsize::new(0),
             num_jobs_pending: Arc::new(AtomicUsize::new(0)),
             state: Mutex::new(AsyncProgressState {
                 num_jobs_total: Saturating(0),
@@ -221,14 +226,18 @@ impl AccountsLtHashAsyncProgress {
             state.num_jobs_total += 1;
             self.num_jobs_pending.fetch_add(1, Ordering::Relaxed);
         }
-        let accumulator = Arc::clone(&self.accumulator);
+        let shard_index = self.next_shard.fetch_add(1, Ordering::Relaxed) % self.accumulators.len();
+        let accumulators = Arc::clone(&self.accumulators);
+        let first_panic = Arc::clone(&self.first_panic);
         let num_jobs_pending = Arc::clone(&self.num_jobs_pending);
         thread_pool.spawn(move || {
             let mut updates = updates;
             let result = catch_unwind(AssertUnwindSafe(|| {
                 let num_updates = Saturating(updates.len() as u64);
                 let lt_hash = Self::process(&mut updates);
-                let mut accumulator = accumulator.lock().unwrap_or_else(|err| err.into_inner());
+                let mut accumulator = accumulators[shard_index]
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner());
                 accumulator.lt_hash.mix_in(&lt_hash);
                 accumulator.stats.num_updates += num_updates;
             }));
@@ -238,9 +247,9 @@ impl AccountsLtHashAsyncProgress {
             batched_updates_freelist().push(updates);
 
             if let Err(payload) = result {
-                let mut accumulator = accumulator.lock().unwrap_or_else(|err| err.into_inner());
-                if accumulator.first_panic.is_none() {
-                    accumulator.first_panic = Some(payload);
+                let mut first_panic = first_panic.lock().unwrap_or_else(|err| err.into_inner());
+                if first_panic.is_none() {
+                    *first_panic = Some(payload);
                 }
             }
 
@@ -284,21 +293,25 @@ impl AccountsLtHashAsyncProgress {
             // Spin, do not yield! This is called by Bank::freeze() and we want to be fast.
         }
 
-        let mut accumulator = self
-            .accumulator
+        let mut first_panic = self
+            .first_panic
             .lock()
             .unwrap_or_else(|err| err.into_inner());
-        if let Some(payload) = accumulator.first_panic.take() {
+        if let Some(payload) = first_panic.take() {
             resume_unwind(payload);
+        }
+        drop(first_panic);
+
+        let mut lt_hash = LtHash::identity();
+        let mut stats = UpdateStats::default();
+        for accumulator in self.accumulators.iter() {
+            let accumulator = accumulator.lock().unwrap_or_else(|err| err.into_inner());
+            lt_hash.mix_in(&accumulator.lt_hash);
+            stats.num_updates += accumulator.stats.num_updates;
         }
         let was_finalized = state.is_finalized;
         state.is_finalized = true;
-        (
-            accumulator.lt_hash.clone(),
-            accumulator.stats.clone(),
-            state.num_jobs_total,
-            !was_finalized,
-        )
+        (lt_hash, stats, state.num_jobs_total, !was_finalized)
     }
 }
 
@@ -313,8 +326,9 @@ struct AccountsLtHashBatch {
 struct AccountsLtHashAccumulator {
     lt_hash: LtHash,
     stats: UpdateStats,
-    first_panic: Option<Box<dyn Any + Send + 'static>>,
 }
+
+type PanicPayload = Box<dyn Any + Send + 'static>;
 
 /// Stats from processing a batch of updates.
 #[derive(Clone, Debug, Default)]
