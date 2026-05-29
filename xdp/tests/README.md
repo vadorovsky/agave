@@ -41,9 +41,64 @@ temporary test network namespace
   route example: 203.0.113.0/24 via 10.0.0.2 dev axdp0
 ```
 
+VM mode runs the same Rust test binaries inside a QEMU guest. The host-side xtask builds the test binaries and guest init, builds an initramfs, boots QEMU with the selected kernel, and the guest init runs the tests as PID 1:
+
+```text
+host cargo xtask
+  |
+  | builds test binaries + /init
+  | builds initramfs
+  v
+QEMU guest kernel
+  |
+  v
+/init
+  |
+  | runs selected test binaries
+  v
+NetNsGuard inside guest
+  |
+  v
+temporary test network namespace + veth topology
+```
+
+```bash
+cargo xtask xdp-test fetch-kernels --kernel-set pr
+cargo xtask xdp-test vm --kernel-set pr
+```
+
+To run a single test in VM mode, use this form:
+
+```bash
+cargo xtask xdp-test vm --kernel-set pr --test <test-binary> -- <test-name> --exact --nocapture
+```
+
+Requirements for VM mode:
+
+- `qemu-system-x86_64` must be installed and available on `PATH`
+- or pass an explicit QEMU path with `--qemu /full/path/to/qemu-system-x86_64`
+
+If QEMU is not installed, `cargo xtask xdp-test vm ...` will fail before booting the guest.
+
+## VM Kernel Sets
+
+The default PR and nightly VM kernel sets are:
+
+- `6.8`
+- `6.17`
+- `7.0`
+
+The runner downloads missing Debian kernel packages into the XDP VM cache. No manual kernel download is required for the default kernel set.
+
+You can prefetch the default PR kernels without running tests:
+
+```bash
+cargo xtask xdp-test fetch-kernels --kernel-set pr
+```
+
 ## Individual Tests
 
-Use the local single-test command form above with these test binaries and names:
+Use the local or VM single-test command form above with these test binaries and names:
 
 | Test binary | Test name |
 | --- | --- |
