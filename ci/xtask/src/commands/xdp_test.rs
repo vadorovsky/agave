@@ -77,6 +77,9 @@ pub struct VmArgs {
     #[arg(long = "kernel-set", value_enum, value_name = "SET")]
     kernel_sets: Vec<KernelSet>,
 
+    #[command(flatten)]
+    kernel_versions: KernelVersionArgs,
+
     #[arg(long, default_value_os_t = default_cache_dir())]
     cache_dir: PathBuf,
 
@@ -102,8 +105,28 @@ pub struct FetchKernelsArgs {
     #[arg(long = "kernel-set", value_enum, value_name = "SET", required = true)]
     kernel_sets: Vec<KernelSet>,
 
+    #[command(flatten)]
+    kernel_versions: KernelVersionArgs,
+
     #[arg(long, default_value_os_t = default_cache_dir())]
     cache_dir: PathBuf,
+}
+
+#[derive(Args, Clone, Debug, Default)]
+struct KernelVersionArgs {
+    #[arg(
+        long = "pr-kernel-version",
+        value_name = "VERSION",
+        help = "Override the default PR kernel versions. Repeat to provide multiple versions."
+    )]
+    pr_kernel_versions: Vec<String>,
+
+    #[arg(
+        long = "nightly-kernel-version",
+        value_name = "VERSION",
+        help = "Override the default nightly kernel versions. Repeat to provide multiple versions."
+    )]
+    nightly_kernel_versions: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, ValueEnum)]
@@ -194,7 +217,8 @@ fn run_vm(args: VmArgs, release: bool) -> Result<()> {
     for tree in args.kernel_trees {
         kernels.push(KernelSource::Tree(resolve_user_path(&tree)?));
     }
-    let downloaded_sources = resolve_kernel_set_sources(&cache_dir, &args.kernel_sets)?;
+    let downloaded_sources =
+        resolve_kernel_set_sources(&cache_dir, &args.kernel_sets, &args.kernel_versions)?;
     kernels.extend(downloaded_sources);
 
     let qemu = resolve_command_path(&args.qemu)?;
@@ -247,7 +271,7 @@ fn fetch_kernels(args: FetchKernelsArgs) -> Result<()> {
     let cache_dir = resolve_user_path(&args.cache_dir)?;
     fs::create_dir_all(&cache_dir)
         .with_context(|| format!("failed to create {}", cache_dir.display()))?;
-    let sources = resolve_kernel_set_sources(&cache_dir, &args.kernel_sets)?;
+    let sources = resolve_kernel_set_sources(&cache_dir, &args.kernel_sets, &args.kernel_versions)?;
     for source in sources {
         println!("{}", kernel_source_label(&source));
     }
@@ -282,16 +306,24 @@ fn guest_run_args(run_args: &[std::ffi::OsString]) -> Result<Vec<String>> {
 fn resolve_kernel_set_sources(
     cache_dir: &Path,
     kernel_sets: &[KernelSet],
+    kernel_version_args: &KernelVersionArgs,
 ) -> Result<Vec<KernelSource>> {
     if kernel_sets.is_empty() {
+        ensure!(
+            kernel_version_args.pr_kernel_versions.is_empty()
+                && kernel_version_args.nightly_kernel_versions.is_empty(),
+            "kernel version overrides require a matching --kernel-set",
+        );
         return Ok(Vec::new());
     }
+
+    validate_kernel_version_args(kernel_sets, kernel_version_args)?;
 
     let download_dir = cache_dir.join("debian-kernels").join("amd64");
     fs::create_dir_all(&download_dir)
         .with_context(|| format!("failed to create {}", download_dir.display()))?;
 
-    let versions = requested_kernel_versions(kernel_sets);
+    let versions = requested_kernel_versions(kernel_sets, kernel_version_args);
     let index = fetch_debian_kernel_index()?;
     let mut sources = Vec::new();
     for version in versions {
@@ -303,20 +335,52 @@ fn resolve_kernel_set_sources(
     Ok(sources)
 }
 
-fn requested_kernel_versions(kernel_sets: &[KernelSet]) -> BTreeSet<&'static str> {
+fn validate_kernel_version_args(
+    kernel_sets: &[KernelSet],
+    kernel_version_args: &KernelVersionArgs,
+) -> Result<()> {
+    let requested = kernel_sets.iter().copied().collect::<BTreeSet<_>>();
+    ensure!(
+        kernel_version_args.pr_kernel_versions.is_empty() || requested.contains(&KernelSet::Pr),
+        "--pr-kernel-version requires --kernel-set pr",
+    );
+    ensure!(
+        kernel_version_args.nightly_kernel_versions.is_empty()
+            || requested.contains(&KernelSet::Nightly),
+        "--nightly-kernel-version requires --kernel-set nightly",
+    );
+    Ok(())
+}
+
+fn requested_kernel_versions(
+    kernel_sets: &[KernelSet],
+    kernel_version_args: &KernelVersionArgs,
+) -> BTreeSet<String> {
     let mut versions = BTreeSet::new();
     for kernel_set in kernel_sets {
-        for version in kernel_versions(*kernel_set) {
-            versions.insert(*version);
+        for version in kernel_versions(*kernel_set, kernel_version_args) {
+            versions.insert(version.to_string());
         }
     }
     versions
 }
 
-fn kernel_versions(kernel_set: KernelSet) -> &'static [&'static str] {
+fn kernel_versions(kernel_set: KernelSet, kernel_version_args: &KernelVersionArgs) -> Vec<&str> {
     match kernel_set {
-        KernelSet::Pr => DEFAULT_PR_KERNEL_VERSIONS,
-        KernelSet::Nightly => DEFAULT_NIGHTLY_KERNEL_VERSIONS,
+        KernelSet::Pr if !kernel_version_args.pr_kernel_versions.is_empty() => kernel_version_args
+            .pr_kernel_versions
+            .iter()
+            .map(String::as_str)
+            .collect(),
+        KernelSet::Pr => DEFAULT_PR_KERNEL_VERSIONS.to_vec(),
+        KernelSet::Nightly if !kernel_version_args.nightly_kernel_versions.is_empty() => {
+            kernel_version_args
+                .nightly_kernel_versions
+                .iter()
+                .map(String::as_str)
+                .collect()
+        }
+        KernelSet::Nightly => DEFAULT_NIGHTLY_KERNEL_VERSIONS.to_vec(),
     }
 }
 

@@ -96,6 +96,13 @@ You can prefetch the default PR kernels without running tests:
 cargo xtask xdp-test fetch-kernels --kernel-set pr
 ```
 
+You can override the default kernel lists without editing the code. For example, to replace the default PR kernel set for a single run:
+
+```bash
+cargo xtask xdp-test fetch-kernels --kernel-set pr --pr-kernel-version 6.6 --pr-kernel-version 6.12
+cargo xtask xdp-test vm --kernel-set pr --pr-kernel-version 6.6 --pr-kernel-version 6.12
+```
+
 ## Individual Tests
 
 Use the local or VM single-test command form above with these test binaries and names:
