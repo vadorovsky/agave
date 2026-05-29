@@ -18,6 +18,8 @@ The default suite currently runs:
 
 - `netlink_snapshot`
 - `route_monitor`
+- `router_snapshot`
+- `transmitter_smoke`
 
 ## Test Topology
 
@@ -39,6 +41,40 @@ temporary test network namespace
 
   neighbor: 10.0.0.2 -> 02:aa:bb:cc:dd:02 dev axdp0
   route example: 203.0.113.0/24 via 10.0.0.2 dev axdp0
+```
+
+The copy-mode transmitter tests use the same primary veth pair. The transmitter binds AF_XDP TX to `axdp0`; the test binds a raw packet socket to `axdp1` and verifies the emitted Ethernet/IP/UDP frame:
+
+```text
+temporary test network namespace
+
+  XdpSender -> copy-mode AF_XDP TX socket
+        |
+        v
+  axdp0 10.0.0.1/24  02:aa:bb:cc:dd:01
+        |
+        | veth peer
+        |
+  axdp1 10.0.0.2/24  02:aa:bb:cc:dd:02
+        ^
+        |
+  raw packet receiver
+```
+
+The router snapshot test also creates a backup veth pair to verify route priority, preferred source handling, and main-table isolation:
+
+```text
+  bxdp0 10.0.1.1/24  02:aa:bb:cc:ee:01
+        |
+        | veth peer
+        |
+  bxdp1 10.0.1.2/24  02:aa:bb:cc:ee:02
+
+  example routes:
+    default via 10.0.0.2 dev axdp0 metric 100
+    default via 10.0.1.2 dev bxdp0 metric 200
+    203.0.113.0/24 via 10.0.1.2 dev bxdp0 src 10.0.1.1 metric 50
+    198.51.100.0/24 via 10.0.1.2 dev bxdp0 table 100
 ```
 
 VM mode runs the same Rust test binaries inside a QEMU guest. The host-side xtask builds the test binaries and guest init, builds an initramfs, boots QEMU with the selected kernel, and the guest init runs the tests as PID 1:
@@ -111,6 +147,11 @@ Use the local or VM single-test command form above with these test binaries and 
 | --- | --- |
 | `netlink_snapshot` | `netlink_snapshot_reads_the_prepared_namespace` |
 | `route_monitor` | `route_monitor_publishes_live_route_updates` |
+| `route_monitor` | `route_monitor_publishes_live_neighbor_updates` |
+| `route_monitor` | `route_monitor_publishes_link_removals` |
+| `router_snapshot` | `router_snapshot_rebuilds_main_table_routes_from_netlink` |
+| `transmitter_smoke` | `socket_tx_binds_copy_mode_to_veth_queue` |
+| `transmitter_smoke` | `transmitter_sends_udp_payload_over_veth_in_copy_mode` |
 
 ## Test Coverage
 
@@ -121,3 +162,14 @@ Use the local or VM single-test command form above with these test binaries and 
 `route_monitor`:
 
 - `route_monitor_publishes_live_route_updates`: verifies the route monitor publishes an added route with the expected next hop and later removes it after the route is deleted.
+- `route_monitor_publishes_live_neighbor_updates`: verifies the route monitor publishes initial, replaced, and removed neighbor state for an existing route.
+- `route_monitor_publishes_link_removals`: verifies deleting a link removes the route that depended on that link from the published router.
+
+`router_snapshot`:
+
+- `router_snapshot_rebuilds_main_table_routes_from_netlink`: builds routers from netlink snapshots and directly from netlink, then verifies default-route selection, more-specific route selection, preferred source handling, neighbor MAC resolution, and main-table isolation.
+
+`transmitter_smoke`:
+
+- `socket_tx_binds_copy_mode_to_veth_queue`: binds a TX-only AF_XDP socket in copy mode to a veth queue and verifies the selected interface, queue, and TX ring capacity.
+- `transmitter_sends_udp_payload_over_veth_in_copy_mode`: builds the copy-mode transmitter, sends a UDP payload through `XdpSender`, and verifies the raw Ethernet/IP/UDP frame received on the peer veth.
