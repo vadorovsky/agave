@@ -20,6 +20,7 @@ The default suite currently runs:
 - `route_monitor`
 - `router_snapshot`
 - `transmitter_smoke`
+- `zero_copy_hardware`
 
 ## Test Topology
 
@@ -98,6 +99,28 @@ outer packet observed by receiver on axdp1:
   IPv4:     10.0.0.1 -> 10.0.0.2
   GRE:      inner IPv4/UDP packet
 ```
+
+Hardware zero-copy tests do not use the veth topology. They are opt-in and bind queue `0` on the real interface named by `AGAVE_XDP_ZC_INTERFACE`:
+
+```text
+AGAVE_XDP_ZC_INTERFACE=<interface>
+  |
+  v
+real zero-copy-capable NIC or VF, queue 0
+  |
+  | attach XDP program
+  | bind AF_XDP socket with XDP_ZEROCOPY
+  v
+zero-copy transmitter build/bind checks
+```
+
+By default `zero_copy_hardware` skips so the portable veth suite can run on ordinary CI workers. Hardware zero-copy CI must run on a worker with a dedicated zero-copy-capable NIC or VF and set:
+
+```bash
+AGAVE_XDP_ZC_INTERFACE=<interface> cargo xtask xdp-test local --runner "sudo -n -E"
+```
+
+When `AGAVE_XDP_ZC_INTERFACE` is set, failing to bind queue `0` with `XDP_ZEROCOPY`, failing to report `XDP_OPTIONS_ZEROCOPY`, or failing to build the zero-copy transmitter is a test failure.
 
 VM mode runs the same Rust test binaries inside a QEMU guest. The host-side xtask builds the test binaries and guest init, builds an initramfs, boots QEMU with the selected kernel, and the guest init runs the tests as PID 1:
 
@@ -178,6 +201,8 @@ Use the local or VM single-test command form above with these test binaries and 
 | `transmitter_smoke` | `socket_tx_binds_copy_mode_to_veth_queue` |
 | `transmitter_smoke` | `transmitter_sends_udp_payload_over_veth_in_copy_mode` |
 | `transmitter_smoke` | `transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode` |
+| `zero_copy_hardware` | `configured_interface_binds_af_xdp_zero_copy` |
+| `zero_copy_hardware` | `configured_interface_builds_zero_copy_transmitter` |
 
 ## Test Coverage
 
@@ -203,3 +228,8 @@ Use the local or VM single-test command form above with these test binaries and 
 - `socket_tx_binds_copy_mode_to_veth_queue`: binds a TX-only AF_XDP socket in copy mode to a veth queue and verifies the selected interface, queue, and TX ring capacity.
 - `transmitter_sends_udp_payload_over_veth_in_copy_mode`: builds the copy-mode transmitter, sends a UDP payload through `XdpSender`, and verifies the raw Ethernet/IP/UDP frame received on the peer veth.
 - `transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode`: builds the copy-mode transmitter for a GRE route, sends a UDP payload through `XdpSender`, and verifies the GRE-encapsulated outer and inner packet fields.
+
+`zero_copy_hardware`:
+
+- `configured_interface_binds_af_xdp_zero_copy`: when `AGAVE_XDP_ZC_INTERFACE` is set, attaches the XDP program to that interface, binds queue `0` with `XDP_ZEROCOPY`, and verifies the socket reports zero-copy mode.
+- `configured_interface_builds_zero_copy_transmitter`: when `AGAVE_XDP_ZC_INTERFACE` is set, builds and joins a zero-copy transmitter on the configured hardware interface.
