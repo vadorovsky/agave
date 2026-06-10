@@ -52,7 +52,7 @@ pub fn load_xdp_program(dev: &NetworkDevice) -> Result<Ebpf, Box<dyn std::error:
     let p: &mut Xdp = ebpf.program_mut("agave_xdp").unwrap().try_into().unwrap();
     p.load()?;
 
-    p.attach_to_if_index(dev.if_index(), aya::programs::xdp::XdpFlags::DRV_MODE)?;
+    p.attach_to_if_index(dev.if_index(), aya::programs::xdp::XdpMode::Driver)?;
 
     Ok(ebpf)
 }
