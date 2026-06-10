@@ -3,6 +3,7 @@
 mod common;
 
 use {
+    aya::test_helpers::NetNsGuard,
     agave_xdp::{
         device::{NetworkDevice, QueueId},
         netlink::MacAddress,
@@ -312,7 +313,7 @@ fn matching_ipv4_udp_payload<'a>(
 
 #[test]
 fn socket_tx_binds_copy_mode_to_veth_queue() {
-    let _netns = common::NetNsGuard::new();
+    let _netns = NetNsGuard::new().unwrap();
     let links = common::setup_veth_pair();
 
     let dev = NetworkDevice::new(&links.left_name).expect("open veth device");
@@ -337,7 +338,7 @@ fn transmitter_sends_udp_payload_over_veth_in_copy_mode() {
         return;
     };
 
-    let _netns = common::NetNsGuard::new();
+    let _netns = NetNsGuard::new().unwrap();
     let links = common::setup_veth_pair();
     common::replace_neighbor(links.right_ip, links.right_mac, &links.left_name);
 
@@ -391,7 +392,7 @@ fn transmitter_sends_udp_payload_over_gre_tunnel_in_copy_mode() {
         return;
     };
 
-    let _netns = common::NetNsGuard::new();
+    let _netns = NetNsGuard::new().unwrap();
     let links = common::setup_veth_pair();
     common::replace_neighbor(links.right_ip, links.right_mac, &links.left_name);
     common::add_route_to_dev(&format!("{}/32", links.right_ip), &links.left_name);

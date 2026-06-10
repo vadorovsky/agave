@@ -3,6 +3,7 @@
 mod common;
 
 use {
+    aya::test_helpers::NetNsGuard,
     agave_xdp::{
         netlink::MacAddress,
         route::{RouteError, RouteTable, Router},
@@ -39,7 +40,7 @@ fn start_route_monitor() -> (
 
 #[test]
 fn route_monitor_publishes_live_route_updates() {
-    let _netns = common::NetNsGuard::new();
+    let _netns = NetNsGuard::new().unwrap();
     let links = common::setup_veth_pair();
 
     let (atomic_router, exit, handle) = start_route_monitor();
@@ -93,7 +94,7 @@ fn route_monitor_publishes_live_route_updates() {
 
 #[test]
 fn route_monitor_publishes_live_neighbor_updates() {
-    let _netns = common::NetNsGuard::new();
+    let _netns = NetNsGuard::new().unwrap();
     let links = common::setup_veth_pair();
 
     let (atomic_router, exit, handle) = start_route_monitor();
@@ -161,7 +162,7 @@ fn route_monitor_publishes_live_neighbor_updates() {
 
 #[test]
 fn route_monitor_publishes_link_removals() {
-    let netns = common::NetNsGuard::new();
+    let netns = NetNsGuard::new().unwrap();
     let links = common::setup_veth_pair();
 
     common::replace_neighbor(links.right_ip, links.right_mac, &links.left_name);
@@ -205,7 +206,7 @@ fn route_monitor_publishes_link_removals() {
 
 #[test]
 fn route_monitor_publishes_live_gre_route_updates() {
-    let netns = common::NetNsGuard::new();
+    let netns = NetNsGuard::new().unwrap();
     let links = common::setup_veth_pair();
 
     let (atomic_router, exit, handle) = start_route_monitor();

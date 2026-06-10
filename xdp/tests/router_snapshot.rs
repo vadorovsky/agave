@@ -3,13 +3,14 @@
 mod common;
 
 use {
+    aya::test_helpers::NetNsGuard,
     agave_xdp::route::{RouteTable, Router, RoutingTables},
     std::net::{IpAddr, Ipv4Addr},
 };
 
 #[test]
 fn router_snapshot_rebuilds_main_table_routes_from_netlink() {
-    let netns = common::NetNsGuard::new();
+    let netns = NetNsGuard::new().unwrap();
     let primary = common::setup_veth_pair();
     let backup = common::setup_backup_veth_pair();
 
@@ -108,7 +109,7 @@ fn router_snapshot_rebuilds_main_table_routes_from_netlink() {
 
 #[test]
 fn router_snapshot_resolves_gre_routes_from_netlink() {
-    let _netns = common::NetNsGuard::new();
+    let _netns = NetNsGuard::new().unwrap();
     let links = common::setup_veth_pair();
 
     common::replace_neighbor(links.right_ip, links.right_mac, &links.left_name);

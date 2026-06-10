@@ -3,6 +3,7 @@
 mod common;
 
 use {
+    aya::test_helpers::NetNsGuard,
     agave_xdp::{
         netlink::{netlink_get_interfaces, netlink_get_neighbors, netlink_get_routes},
         route::RouteTable,
@@ -13,7 +14,7 @@ use {
 
 #[test]
 fn netlink_snapshot_reads_the_prepared_namespace() {
-    let _netns = common::NetNsGuard::new();
+    let _netns = NetNsGuard::new();
     let links = common::setup_veth_pair();
 
     let routed_prefix = "203.0.113.0/24";
@@ -53,7 +54,7 @@ fn netlink_snapshot_reads_the_prepared_namespace() {
 
 #[test]
 fn netlink_snapshot_reads_gre_tunnel_metadata() {
-    let _netns = common::NetNsGuard::new();
+    let _netns = NetNsGuard::new();
     let links = common::setup_veth_pair();
     let gre = common::setup_gre_tunnel(&links);
 

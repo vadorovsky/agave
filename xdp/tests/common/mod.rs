@@ -44,49 +44,6 @@ pub struct TestGreTunnel {
     pub overlay_ip: std::net::Ipv4Addr,
 }
 
-pub struct NetNsGuard {
-    old_ns: File,
-}
-
-impl NetNsGuard {
-    pub fn new() -> Self {
-        require_root();
-
-        let tid = unsafe { libc::syscall(libc::SYS_gettid) };
-        let old_ns_path = format!("/proc/self/task/{tid}/ns/net");
-        let old_ns = File::open(&old_ns_path)
-            .unwrap_or_else(|err| panic!("failed to open {old_ns_path}: {err}"));
-
-        if unsafe { libc::unshare(libc::CLONE_NEWNET) } != 0 {
-            let err = std::io::Error::last_os_error();
-            panic!("failed to unshare network namespace: {err}");
-        }
-
-        let netns = Self { old_ns };
-        netns.ip(&["link", "set", "lo", "up"]);
-        netns
-    }
-
-    pub fn ip(&self, args: &[&str]) {
-        run_command(ip_command(), args);
-    }
-}
-
-impl Drop for NetNsGuard {
-    fn drop(&mut self) {
-        if unsafe { libc::setns(self.old_ns.as_raw_fd(), libc::CLONE_NEWNET) } == 0 {
-            return;
-        }
-
-        let err = std::io::Error::last_os_error();
-        if std::thread::panicking() {
-            eprintln!("failed to restore original network namespace: {err}");
-        } else {
-            panic!("failed to restore original network namespace: {err}");
-        }
-    }
-}
-
 pub fn setup_veth_pair() -> TestLinks {
     setup_veth_pair_named(
         LEFT_IFACE,
