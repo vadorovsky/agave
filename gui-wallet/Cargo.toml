@@ -1,0 +1,31 @@
+[package]
+name = "agave-gui-wallet"
+description = "Basic GUI wallet for Solana hardware devices"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[[bin]]
+name = "agave-gui-wallet"
+path = "src/main.rs"
+
+[features]
+default = ["remote-wallet-hidraw"]
+remote-wallet-hidraw = ["solana-remote-wallet/linux-static-hidraw"]
+
+[dependencies]
+iced = "0.12"
+solana-derivation-path = { workspace = true }
+solana-native-token = { workspace = true }
+solana-pubkey = { workspace = true, features = ["std"] }
+solana-remote-wallet = { workspace = true, features = ["keystone"] }
+solana-rpc-client = { workspace = true, features = ["default"] }
+solana-signature = { workspace = true, features = ["std"] }
+solana-transaction = { workspace = true }
+solana-system-interface = { workspace = true, features = ["bincode"] }
+
+[lints]
+workspace = true
