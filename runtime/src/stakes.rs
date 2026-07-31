@@ -23,7 +23,7 @@ use {
     solana_clock::Epoch,
     solana_leader_schedule::SlotLeader,
     solana_nohash_hasher::BuildNoHashHasher,
-    solana_pubkey::Pubkey,
+    solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_stake_interface::{
         program as stake_program,
         state::{Delegation, StakeActivationStatus},
@@ -219,7 +219,7 @@ impl StakesCache {
     }
 }
 
-pub(crate) type StakeDelegationsSnapshot<T> = IndexMap<Pubkey, T, AHashRandomState>;
+pub(crate) type StakeDelegationsSnapshot<T> = IndexMap<Pubkey, T, PubkeyHasherBuilder>;
 
 /// Indexed overlay view of stake delegations.
 ///
@@ -230,7 +230,7 @@ pub(crate) struct IndexedStakeDelegations<'a, T: Clone> {
     snapshot: Arc<StakeDelegationsSnapshot<T>>,
     overrides: HashMap<&'a usize, &'a T, BuildNoHashHasher<usize>>,
     additions: Vec<(&'a Pubkey, &'a T)>,
-    removals: HashSet<&'a Pubkey>,
+    removals: HashSet<&'a Pubkey, PubkeyHasherBuilder>,
 }
 
 impl<'a, T: Clone + Sync> IndexedStakeDelegations<'a, T> {
@@ -286,7 +286,7 @@ pub(crate) struct StakeDelegationsIter<'a, T: Clone> {
         &'a ImblHashMap<usize, T, BuildNoHashHasher<usize>, DefaultSharedPtr>,
     stake_delegations_additions:
         imbl::hashmap::Iter<'a, Pubkey, T, imbl::shared_ptr::DefaultSharedPtr>,
-    stake_delegations_removals: &'a ImblHashSet<Pubkey, AHashRandomState, DefaultSharedPtr>,
+    stake_delegations_removals: &'a ImblHashSet<Pubkey, PubkeyHasherBuilder, DefaultSharedPtr>,
     remaining_removals: usize,
 }
 
@@ -367,13 +367,13 @@ pub(crate) struct StakeDelegationsMaps<T: Clone> {
     /// They can be applied to the snapshot via
     /// [`Self::update_stake_delegations_snapshot`].
     #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
-    additions: ImblHashMap<Pubkey, T, AHashRandomState, DefaultSharedPtr>,
+    additions: ImblHashMap<Pubkey, T, PubkeyHasherBuilder, DefaultSharedPtr>,
 
     /// Stale delegation removals of `stake_delegations_snapshot` elements,
     /// that come from committed transactions. The removals are applied with
     /// [`Self::update_stake_delegations_snapshot`].
     #[cfg_attr(feature = "frozen-abi", stable_abi_sample(with = "Default::default()"))]
-    removals: ImblHashSet<Pubkey, AHashRandomState, DefaultSharedPtr>,
+    removals: ImblHashSet<Pubkey, PubkeyHasherBuilder, DefaultSharedPtr>,
 }
 
 impl<T: Clone> Default for StakeDelegationsMaps<T> {
