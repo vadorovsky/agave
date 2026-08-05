@@ -16,6 +16,7 @@ pub mod memory_context;
 pub mod program_cache_entry;
 pub mod program_metrics;
 pub mod serialization;
+mod small_vec_deque;
 pub mod stable_log;
 pub mod sysvar_cache;
 pub mod vm;

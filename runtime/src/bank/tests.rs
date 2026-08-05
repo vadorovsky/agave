@@ -6339,7 +6339,8 @@ fn test_bank_load_program() {
             .global_program_cache
             .read()
             .unwrap();
-        let [program] = program_cache.get_slot_versions_for_tests(&program_key) else {
+        let slot_versions = program_cache.get_slot_versions_for_tests(&program_key);
+        let [program] = slot_versions.as_slice() else {
             panic!();
         };
         assert_matches!(program.program, ProgramCacheEntryType::Loaded(_));
