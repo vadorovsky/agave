@@ -8,6 +8,7 @@ use {
         program_metrics::{EMA_SCALE, ProgramCacheStats},
     },
     log::error,
+    smallvec::SmallVec,
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
     solana_sbpf::program::BuiltinProgram,
@@ -21,6 +22,8 @@ use {
         sync::Weak,
     },
 };
+
+type ProgramCacheEntryVersions = SmallVec<[Arc<ProgramCacheEntry>; 2]>;
 
 #[repr(transparent)]
 #[derive(Clone, Debug)]
@@ -217,7 +220,7 @@ pub(crate) enum IndexImplementation {
         ///
         /// - the first level is for the address at which programs are deployed
         /// - the second level for the slot (and thus also fork), sorted by slot number.
-        entries: HashMap<Pubkey, Vec<Arc<ProgramCacheEntry>>>,
+        entries: HashMap<Pubkey, ProgramCacheEntryVersions>,
         /// The entries that are getting loaded and have not yet finished loading.
         ///
         /// The key is the program address, the value is a tuple of the slot in which the program is
