@@ -18,7 +18,11 @@ use {
     solana_pubkey::{Pubkey, PubkeyHasherBuilder},
     solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
-    std::{collections::HashMap, mem::MaybeUninit, sync::Arc},
+    std::{
+        collections::{HashMap, HashSet},
+        mem::MaybeUninit,
+        sync::Arc,
+    },
 };
 
 /// Number of blocks for reward calculation and storing vote accounts.
@@ -188,6 +192,7 @@ pub(super) struct RewardCommission {
 }
 
 pub(super) type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;
+pub(super) type CommissionReceivingVoteAddresses = HashSet<Pubkey, PubkeyHasherBuilder>;
 
 /// Helper struct to give the amounts distributed to commission accounts or
 /// burned in different manners
@@ -298,6 +303,7 @@ pub(super) struct StakeRewardCalculation {
 #[derive(Debug)]
 struct CalculateValidatorRewardsResult {
     reward_commissions: RewardCommissions,
+    commission_receiving_vote_addresses: CommissionReceivingVoteAddresses,
     stake_reward_calculation: StakeRewardCalculation,
     point_value: PointValue,
 }
@@ -306,6 +312,7 @@ impl Default for CalculateValidatorRewardsResult {
     fn default() -> Self {
         Self {
             reward_commissions: RewardCommissions::default(),
+            commission_receiving_vote_addresses: CommissionReceivingVoteAddresses::default(),
             stake_reward_calculation: StakeRewardCalculation::default(),
             point_value: PointValue {
                 points: 0,
@@ -344,6 +351,7 @@ pub(super) struct EpochRewardCalculateParamInfo<'a> {
 #[derive(Debug)]
 pub(super) struct PartitionedRewardsCalculation {
     reward_commissions: RewardCommissions,
+    commission_receiving_vote_addresses: CommissionReceivingVoteAddresses,
     stake_rewards: StakeRewardCalculation,
     capitalization: u64,
     point_value: PointValue,
