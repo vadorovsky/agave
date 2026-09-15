@@ -1,11 +1,10 @@
 use {
     super::{
-        Bank, CachedVoteAccounts, CalculateValidatorRewardsResult,
-        CommissionReceivingVoteAddresses, EpochBoundaryAccounts, EpochBoundaryAccountsStorable,
-        EpochRewardCalculateParamInfo, InflationReward, PartitionedRewardsCalculation,
-        PartitionedStakeReward, PartitionedStakeRewards, REWARD_CALCULATION_NUM_BLOCKS,
-        RewardCommission, RewardCommissions, RewardLamportAmounts, StakeRewardCalculation,
-        epoch_rewards_hasher::hash_rewards_into_partitions,
+        Bank, CachedVoteAccounts, CalculateValidatorRewardsResult, EpochBoundaryAccounts,
+        EpochBoundaryAccountsStorable, EpochRewardCalculateParamInfo, InflationReward,
+        PartitionedRewardsCalculation, PartitionedStakeReward, PartitionedStakeRewards,
+        REWARD_CALCULATION_NUM_BLOCKS, RewardCommission, RewardCommissions, RewardLamportAmounts,
+        StakeRewardCalculation, epoch_rewards_hasher::hash_rewards_into_partitions,
     },
     crate::{
         alpenglow_epoch_type::{AlpenglowEpochType, RewardEpochDelegatedStakes},
@@ -55,7 +54,6 @@ struct InflationRewardWithCommission {
 #[derive(Default)]
 struct RewardsAccumulator {
     reward_commissions: RewardCommissions,
-    commission_receiving_vote_addresses: CommissionReceivingVoteAddresses,
     num_stake_rewards: usize,
     total_stake_rewards_lamports: u64,
 }
@@ -132,10 +130,6 @@ impl RewardsAccumulator {
             .total_stake_rewards_lamports
             .saturating_add(reward.stake_reward);
         if let Some((commission_pubkey, reward_commission)) = reward.commission {
-            if reward_commission.is_vote_account {
-                self.commission_receiving_vote_addresses
-                    .insert(commission_pubkey);
-            }
             self.reward_commissions
                 .entry(commission_pubkey)
                 .and_modify(|dst_reward_commission| {
@@ -398,7 +392,6 @@ impl Bank {
     ) -> RewardLamportAmounts {
         let PartitionedRewardsCalculation {
             reward_commissions,
-            commission_receiving_vote_addresses,
             stake_rewards,
             capitalization,
             point_value,
@@ -413,7 +406,6 @@ impl Bank {
         let (epoch_boundary_accounts, load_and_update_epoch_boundary_accounts_us) =
             measure_us!(self.load_and_update_epoch_boundary_accounts(
                 reward_commissions,
-                commission_receiving_vote_addresses,
                 reward_epoch_delegated_stakes,
                 thread_pool
             ));
@@ -548,7 +540,6 @@ impl Bank {
 
         let CalculateValidatorRewardsResult {
             reward_commissions,
-            commission_receiving_vote_addresses,
             stake_reward_calculation: stake_rewards,
             point_value,
         } = self
@@ -572,7 +563,6 @@ impl Bank {
 
         PartitionedRewardsCalculation {
             reward_commissions,
-            commission_receiving_vote_addresses,
             stake_rewards,
             capitalization,
             point_value,
@@ -606,7 +596,7 @@ impl Bank {
             metrics,
         )
         .map(|point_value| {
-            let (reward_commissions, commission_receiving_vote_addresses, stake_reward_calculation) = self
+            let (reward_commissions, stake_reward_calculation) = self
                 .calculate_stake_rewards_and_commissions(
                     stake_history,
                     stake_delegations,
@@ -620,7 +610,6 @@ impl Bank {
                 );
             CalculateValidatorRewardsResult {
                 reward_commissions,
-                commission_receiving_vote_addresses,
                 stake_reward_calculation,
                 point_value,
             }
@@ -834,11 +823,7 @@ impl Bank {
         thread_pool: &ThreadPool,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         metrics: &mut RewardsMetrics,
-    ) -> (
-        RewardCommissions,
-        CommissionReceivingVoteAddresses,
-        StakeRewardCalculation,
-    ) {
+    ) -> (RewardCommissions, StakeRewardCalculation) {
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
         let feature_snapshot = self.feature_set.snapshot();
         let delay_commission_updates = feature_snapshot.delay_commission_updates;
@@ -963,7 +948,6 @@ impl Bank {
         });
         let RewardsAccumulator {
             reward_commissions,
-            commission_receiving_vote_addresses,
             num_stake_rewards,
             total_stake_rewards_lamports,
         } = rewards_accumulator;
@@ -978,7 +962,6 @@ impl Bank {
 
         (
             reward_commissions,
-            commission_receiving_vote_addresses,
             StakeRewardCalculation {
                 stake_rewards: Arc::new(stake_rewards),
                 total_stake_rewards_lamports,
@@ -1120,7 +1103,7 @@ impl Bank {
         // accounts from the start of the epoch. For this reason, the
         // `EpochBoundaryAccounts` calculated in this function call should
         // NOT be used ever.
-        let (_, _, StakeRewardCalculation { stake_rewards, .. }) = self
+        let (_, StakeRewardCalculation { stake_rewards, .. }) = self
             .calculate_stake_rewards_and_commissions(
                 &stake_history,
                 stake_delegations,
@@ -1154,7 +1137,6 @@ impl Bank {
     fn load_and_update_epoch_boundary_accounts(
         &self,
         reward_commissions: &RewardCommissions,
-        commission_receiving_vote_addresses: &CommissionReceivingVoteAddresses,
         reward_epoch_delegated_stakes: &RewardEpochDelegatedStakes,
         thread_pool: &ThreadPool,
     ) -> EpochBoundaryAccounts {
@@ -1280,7 +1262,10 @@ impl Bank {
                         .par_iter()
                         .map(|(key, _)| key)
                         .filter_map(|vote_address| {
-                            if commission_receiving_vote_addresses.contains(vote_address) {
+                            if reward_commissions
+                                .get(vote_address)
+                                .is_some_and(|reward_commission| reward_commission.is_vote_account)
+                            {
                                 return None;
                             }
                             let mut account =
@@ -1391,7 +1376,6 @@ mod tests {
         solana_vote_program::vote_state::{self, create_bls_proof_of_possession},
         std::{
             collections::{HashMap, HashSet},
-            iter,
             sync::{Arc, RwLock, RwLockReadGuard},
         },
         test_case::{test_case, test_matrix},
@@ -1763,7 +1747,6 @@ mod tests {
         .collect::<PartitionedStakeRewards>();
         let rewards_calculation = PartitionedRewardsCalculation {
             reward_commissions,
-            commission_receiving_vote_addresses: HashSet::from_iter(iter::once(commission_pubkey)),
             stake_rewards: StakeRewardCalculation {
                 stake_rewards: Arc::new(stake_rewards),
                 total_stake_rewards_lamports: stake_reward_lamports,
@@ -2467,8 +2450,8 @@ mod tests {
             stake_delegations,
             cached_vote_accounts,
         } = bank.get_epoch_params_for_recalculation(rewarded_epoch, &stakes);
-        let (vote_rewards_accounts, commission_receiving_vote_addresses, stake_reward_calculation) =
-            bank.calculate_stake_rewards_and_commissions(
+        let (vote_rewards_accounts, stake_reward_calculation) = bank
+            .calculate_stake_rewards_and_commissions(
                 &stake_history,
                 stake_delegations,
                 cached_vote_accounts,
@@ -2492,11 +2475,6 @@ mod tests {
         let vote_rewards = 0;
         assert_eq!(reward_commission.commission_lamports, vote_rewards);
         assert_eq!(reward_commission.commission_bps, None);
-
-        assert_eq!(commission_receiving_vote_addresses.len(), 1);
-        commission_receiving_vote_addresses
-            .get(vote_pubkey)
-            .unwrap();
 
         assert_eq!(stake_reward_calculation.stake_rewards.num_rewards(), 1);
         let expected_reward = {
@@ -3734,12 +3712,10 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let reward_commissions = RewardCommissions::default();
-        let commission_receiving_vote_addresses = HashSet::default();
         let reward_epoch_delegated_stakes =
             RewardEpochDelegatedStakes::new_for_tests(bank.epoch.saturating_sub(1));
         let result = bank.load_and_update_epoch_boundary_accounts(
             &reward_commissions,
-            &commission_receiving_vote_addresses,
             &reward_epoch_delegated_stakes,
             &thread_pool,
         );
@@ -3765,12 +3741,10 @@ mod tests {
                 is_vote_account: false,
             },
         );
-        let commission_receiving_vote_addresses = HashSet::default();
         let reward_epoch_delegated_stakes =
             RewardEpochDelegatedStakes::new_for_tests(bank.epoch.saturating_sub(1));
         let result = bank.load_and_update_epoch_boundary_accounts(
             &reward_commissions,
-            &commission_receiving_vote_addresses,
             &reward_epoch_delegated_stakes,
             &thread_pool,
         );
@@ -3802,8 +3776,6 @@ mod tests {
             },
         );
 
-        let commission_receiving_vote_addresses = HashSet::from_iter(iter::once(pubkey));
-
         // Simulate the VAT burn that would run in `update_epoch_stakes`
         // between reward calculation and distribution.
         let post_burn_balance = pre_burn_balance - crate::bank::DEFAULT_VAT_TO_BURN_PER_EPOCH;
@@ -3816,7 +3788,6 @@ mod tests {
 
         let result = bank.load_and_update_epoch_boundary_accounts(
             &reward_commissions,
-            &commission_receiving_vote_addresses,
             &reward_epoch_delegated_stakes,
             &thread_pool,
         );
@@ -3861,12 +3832,10 @@ mod tests {
                         is_vote_account: true,
                     },
                 );
-                let commission_receiving_vote_addresses = HashSet::from_iter(iter::once(pubkey));
                 let reward_epoch_delegated_stakes =
                     RewardEpochDelegatedStakes::new_for_tests(bank.epoch.saturating_sub(1));
                 let result = bank.load_and_update_epoch_boundary_accounts(
                     &reward_commissions,
-                    &commission_receiving_vote_addresses,
                     &reward_epoch_delegated_stakes,
                     &thread_pool,
                 );
@@ -4223,12 +4192,10 @@ mod tests {
                 is_vote_account: false,
             },
         );
-        let commission_receiving_vote_addresses = HashSet::default();
         let reward_epoch_delegated_stakes =
             RewardEpochDelegatedStakes::new_for_tests(bank.epoch.saturating_sub(1));
         let result = bank.load_and_update_epoch_boundary_accounts(
             &reward_commissions,
-            &commission_receiving_vote_addresses,
             &reward_epoch_delegated_stakes,
             &thread_pool,
         );
@@ -4646,12 +4613,8 @@ mod tests {
             },
         );
 
-        let commission_receiving_vote_addresses =
-            HashSet::from_iter(iter::once(vote_account_receiver));
-
         let rewards_calculation = PartitionedRewardsCalculation {
             reward_commissions,
-            commission_receiving_vote_addresses,
             stake_rewards: StakeRewardCalculation {
                 stake_rewards: Arc::new(stake_rewards),
                 total_stake_rewards_lamports: stake_reward_lamports,
