@@ -282,7 +282,9 @@ pub fn send_to(
     socket_addr_space: &SocketAddrSpace,
 ) -> Result<()> {
     for p in batch.iter() {
-        let addr = p.meta().socket_addr();
+        let Some(addr) = p.socket_addr() else {
+            continue;
+        };
         if socket_addr_space.check(&addr)
             && let Some(data) = p.data(..)
         {
@@ -305,10 +307,7 @@ mod tests {
     };
 
     fn test_packet(dest: &SocketAddr, size: usize) -> BytesPacket {
-        let mut meta = Meta::default();
-        meta.size = size;
-        meta.set_socket_addr(dest);
-        BytesPacket::new(Bytes::from(vec![0u8; size]), meta)
+        BytesPacket::new_with_socket_addr(Bytes::from(vec![0u8; size]), dest)
     }
 
     fn recv_from(
@@ -359,8 +358,8 @@ mod tests {
         assert_eq!(recvd, batch.len());
 
         for m in batch.iter() {
-            assert_eq!(m.meta().size, PACKET_DATA_SIZE);
-            assert_eq!(m.meta().socket_addr(), saddr);
+            assert_eq!(m.size(), PACKET_DATA_SIZE);
+            assert_eq!(m.socket_addr(), Some(saddr));
         }
     }
 

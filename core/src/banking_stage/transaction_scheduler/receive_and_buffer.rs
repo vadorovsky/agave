@@ -555,7 +555,7 @@ mod tests {
             AccountMeta, AddressLookupTableAccount, Instruction, Message, VersionedMessage, v0,
         },
         solana_nonce::{self as nonce, state::DurableNonce},
-        solana_packet::{Meta, PACKET_DATA_SIZE},
+        solana_packet::PACKET_DATA_SIZE,
         solana_perf::packet::{BytesPacket, PacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, bank_forks::BankForks},
@@ -903,7 +903,6 @@ mod tests {
         Arc::make_mut(&mut packet_batch)
             .first_mut()
             .unwrap()
-            .meta_mut()
             .set_discard(true);
         sender.send(packet_batch).unwrap();
 
@@ -951,7 +950,6 @@ mod tests {
 
         let packet_batch = Arc::new(PacketBatch::from(vec![BytesPacket::new(
             vec![1u8; PACKET_DATA_SIZE].into(),
-            Meta::default(),
         )]));
         sender.send(packet_batch).unwrap();
 

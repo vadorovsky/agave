@@ -88,7 +88,7 @@ const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 
 /// Returns the packet's payload, or None if the packet is discarded.
 fn packet_bytes(packet: &BytesPacket) -> Option<Bytes> {
-    (!packet.meta().discard()).then(|| packet.buffer().clone())
+    (!packet.discard()).then(|| packet.buffer().clone())
 }
 
 #[derive(Debug, Default)]
@@ -1071,7 +1071,6 @@ mod tests {
         Arc::make_mut(&mut packet_batch)
             .first_mut()
             .unwrap()
-            .meta_mut()
             .set_discard(true); // set discard on `tx_no_ver`
 
         // glad they all fit

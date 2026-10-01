@@ -90,24 +90,24 @@ impl ShredFetchStage {
                     repair_context.outstanding_repair_requests.write().unwrap();
                 packet_batch
                     .iter_mut()
-                    .filter(|packet| !packet.meta().discard())
+                    .filter(|packet| !packet.discard())
                     .for_each(|packet| {
                         // Have to set repair flag here so that the nonce is
                         // taken off the shred's payload.
-                        packet.meta_mut().flags |= PacketFlags::REPAIR;
+                        packet.insert_flags(PacketFlags::REPAIR);
                         if !verify_repair_nonce(packet, now, &mut outstanding_repair_requests) {
-                            packet.meta_mut().set_discard(true);
+                            packet.set_discard(true);
                         }
                     });
             }
 
             // Filter out shreds that are way too far in the future to avoid the
             // overhead of having to hold onto them.
-            for packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
+            for packet in packet_batch.iter_mut().filter(|p| !p.discard()) {
                 if shred_filter_ctx.should_discard_packet(packet) {
-                    packet.meta_mut().set_discard(true);
+                    packet.set_discard(true);
                 } else {
-                    packet.meta_mut().flags.insert(flags);
+                    packet.insert_flags(flags);
                 }
             }
             if shred_filter_ctx.maybe_submit_stats(name, STATS_SUBMIT_CADENCE)
@@ -249,7 +249,7 @@ fn verify_repair_nonce(
     now: u64, // solana_time_utils::timestamp()
     outstanding_repair_requests: &mut OutstandingShredRepairs,
 ) -> bool {
-    debug_assert!(packet.meta().flags.contains(PacketFlags::REPAIR));
+    debug_assert!(packet.flags().contains(PacketFlags::REPAIR));
     let Some((shred, Some(nonce))) = shred::layout::get_shred_and_repair_nonce(packet) else {
         return false;
     };

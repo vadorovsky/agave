@@ -256,7 +256,7 @@ impl ShredFilterContext {
     pub fn should_discard_packet(&mut self, packet: &BytesPacket) -> bool {
         if self
             .cached_turbine_mode
-            .should_discard_packet(packet.meta().repair())
+            .should_discard_packet(packet.repair())
         {
             return true;
         }
@@ -606,7 +606,8 @@ mod tests {
         assert_matches::assert_matches,
         itertools::Itertools,
         solana_leader_schedule::SlotLeader,
-        solana_perf::packet::{BytesPacket, Packet, PacketFlags},
+        solana_packet::PacketFlags,
+        solana_perf::packet::{BytesPacket, Packet},
         solana_runtime::{
             bank::Bank,
             slot_params::{slot_time_feature_gates, slot_time_feature_ids},

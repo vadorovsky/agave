@@ -548,7 +548,10 @@ impl BlockIdRepairService {
         };
 
         if let BlockIdRepairResponse::Ping { ping } = &response {
-            let addr = packet.meta().socket_addr();
+            let Some(addr) = packet.socket_addr() else {
+                state.response_stats.invalid_packets += 1;
+                return;
+            };
             Self::process_block_id_repair_ping_response(
                 my_pubkey,
                 addr,
@@ -1667,7 +1670,7 @@ mod tests {
         let response = BlockIdRepairResponse::Ping { ping };
         let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
-        packet.meta_mut().set_socket_addr(&from_addr);
+        packet.set_socket_addr(&from_addr);
 
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
@@ -1707,7 +1710,7 @@ mod tests {
         let response = BlockIdRepairResponse::Ping { ping: first_ping };
         let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
-        packet.meta_mut().set_socket_addr(&from_addr);
+        packet.set_socket_addr(&from_addr);
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
             &packet,
@@ -1720,7 +1723,7 @@ mod tests {
         let response = BlockIdRepairResponse::Ping { ping: second_ping };
         let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
-        packet.meta_mut().set_socket_addr(&from_addr);
+        packet.set_socket_addr(&from_addr);
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),
             &packet,
@@ -1745,7 +1748,7 @@ mod tests {
         let response = BlockIdRepairResponse::Ping { ping };
         let data = wincode::serialize(&response).unwrap();
         let mut packet = make_packet(&data);
-        packet.meta_mut().set_socket_addr(&from_addr);
+        packet.set_socket_addr(&from_addr);
 
         BlockIdRepairService::process_block_id_repair_response(
             &Pubkey::new_unique(),

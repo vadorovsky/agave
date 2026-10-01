@@ -361,7 +361,10 @@ impl AncestorHashesService {
         keypair: &Keypair,
         ancestor_socket: &UdpSocket,
     ) -> Option<AncestorRequestDecision> {
-        let from_addr = packet.meta().socket_addr();
+        let Some(from_addr) = packet.socket_addr() else {
+            stats.invalid_packets += 1;
+            return None;
+        };
         let Some(packet_data) = packet.data(..) else {
             stats.invalid_packets += 1;
             return None;
@@ -1511,10 +1514,8 @@ mod test {
         let mut response_packet = response_receiver
             .recv_timeout(Duration::from_millis(1_000))
             .unwrap();
-        let packet = response_packet.first_mut().unwrap();
-        packet
-            .meta_mut()
-            .set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
+        let packet = &mut response_packet[0];
+        packet.set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
         let decision = AncestorHashesService::verify_and_process_ancestor_response(
             packet,
             &ancestor_hashes_request_statuses,
@@ -1554,10 +1555,8 @@ mod test {
         let mut response_packet = response_receiver
             .recv_timeout(Duration::from_millis(10_000))
             .unwrap();
-        let packet = response_packet.first_mut().unwrap();
-        packet
-            .meta_mut()
-            .set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
+        let packet = &mut response_packet[0];
+        packet.set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
         let AncestorRequestDecision {
             slot,
             request_type,
@@ -1614,10 +1613,8 @@ mod test {
         let mut response_packet = response_receiver
             .recv_timeout(Duration::from_millis(10_000))
             .unwrap();
-        let packet = response_packet.first_mut().unwrap();
-        packet
-            .meta_mut()
-            .set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
+        let packet = &mut response_packet[0];
+        packet.set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
         let AncestorRequestDecision {
             slot,
             request_type,
@@ -1993,10 +1990,8 @@ mod test {
         let mut response_packet = response_receiver
             .recv_timeout(Duration::from_millis(10_000))
             .unwrap();
-        let packet = response_packet.first_mut().unwrap();
-        packet
-            .meta_mut()
-            .set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
+        let packet = &mut response_packet[0];
+        packet.set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
         let decision = AncestorHashesService::verify_and_process_ancestor_response(
             packet,
             &ancestor_hashes_request_statuses,
@@ -2056,10 +2051,8 @@ mod test {
         let mut response_packet = response_receiver
             .recv_timeout(Duration::from_millis(10_000))
             .unwrap();
-        let packet = response_packet.first_mut().unwrap();
-        packet
-            .meta_mut()
-            .set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
+        let packet = &mut response_packet[0];
+        packet.set_socket_addr(&responder_info.serve_repair(Protocol::UDP).unwrap());
         let AncestorRequestDecision {
             slot,
             request_type,

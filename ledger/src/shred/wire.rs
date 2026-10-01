@@ -48,7 +48,7 @@ pub fn get_shred_mut(buffer: &mut [u8]) -> Option<&mut [u8]> {
 pub fn get_shred_and_repair_nonce(packet: &BytesPacket) -> Option<(&[u8], Option<Nonce>)> {
     let data = packet.data(..)?;
     let shred = data.get(..get_shred_size(data)?)?;
-    if !packet.meta().repair() {
+    if !packet.repair() {
         return Some((shred, None));
     }
     let offset = data.len().checked_sub(4)?;
@@ -442,7 +442,7 @@ mod tests {
 
                 let packet = &mut shred.payload().to_bytes_packet(nonce);
                 if repaired {
-                    packet.meta_mut().flags |= PacketFlags::REPAIR;
+                    packet.insert_flags(PacketFlags::REPAIR);
                 }
                 resign_packet(packet, &keypair).unwrap();
             } else {
@@ -453,7 +453,7 @@ mod tests {
 
                 let packet = &mut shred.payload().to_bytes_packet(nonce);
                 if repaired {
-                    packet.meta_mut().flags |= PacketFlags::REPAIR;
+                    packet.insert_flags(PacketFlags::REPAIR);
                 }
                 assert_matches!(
                     resign_packet(packet, &keypair),
@@ -490,7 +490,7 @@ mod tests {
             let nonce = repaired.then(|| rng.random::<Nonce>());
             let mut packet = shred.payload().to_bytes_packet(nonce);
             if repaired {
-                packet.meta_mut().flags |= PacketFlags::REPAIR;
+                packet.insert_flags(PacketFlags::REPAIR);
             }
             let packet = &packet;
             assert_eq!(

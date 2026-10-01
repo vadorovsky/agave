@@ -209,7 +209,7 @@ fn recv_loop<P: SocketProvider>(
                     }
                     packet_batch
                         .iter_mut()
-                        .for_each(|p| p.meta_mut().set_from_staked_node(is_staked_service));
+                        .for_each(|p| p.set_from_staked_node(is_staked_service));
                     let batch = PacketBatch::from(packet_batch);
                     match packet_batch_sender.try_send(batch) {
                         Ok(_) => {}
@@ -387,7 +387,10 @@ impl StreamerSendStats {
     }
 
     fn record(&mut self, pkt: &BytesPacket) {
-        let ent = self.host_map.entry(pkt.meta().addr).or_default();
+        let Some(addr) = pkt.addr() else {
+            return;
+        };
+        let ent = self.host_map.entry(addr).or_default();
         ent.count += 1;
         ent.bytes += pkt.data(..).map(<[u8]>::len).unwrap_or_default() as u64;
     }
@@ -434,7 +437,7 @@ pub fn filter_packets_by_socket_addr_space<'a>(
     socket_addr_space: &'a SocketAddrSpace,
 ) -> impl Iterator<Item = (&'a [u8], SocketAddr)> + 'a {
     packets.filter_map(move |pkt| {
-        let addr = pkt.meta().socket_addr();
+        let addr = pkt.socket_addr()?;
         let data = pkt.data(..)?;
         socket_addr_space.check(&addr).then_some((data, addr))
     })
@@ -529,7 +532,7 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{BytesPacket, BytesPacketBatch, Meta, PACKET_DATA_SIZE, Packet},
+            packet::{BytesPacket, BytesPacketBatch, PACKET_DATA_SIZE, Packet},
             sendmmsg::batch_send,
             streamer::receiver,
         },
@@ -619,10 +622,9 @@ mod test {
             for i in 0..NUM_PACKETS {
                 let mut buffer = vec![0u8; PACKET_DATA_SIZE];
                 buffer[0] = i as u8;
-                let mut meta = Meta::default();
-                meta.size = PACKET_DATA_SIZE;
-                meta.set_socket_addr(&addr);
-                packet_batch.push(BytesPacket::new(buffer.into(), meta));
+                let mut packet = BytesPacket::new(buffer.into());
+                packet.set_socket_addr(&addr);
+                packet_batch.push(packet);
             }
             let packet_batch = PacketBatch::from(packet_batch);
             s_responder.send(packet_batch).expect("send");

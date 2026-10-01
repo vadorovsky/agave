@@ -189,13 +189,13 @@ fn run_shred_sigverify<const K: usize>(
             .par_iter_mut()
             .flatten()
             .filter(|packet| {
-                !packet.meta().discard()
+                !packet.discard()
                     && shred::wire::get_shred(packet)
                         .map(|shred| deduper.dedup(shred))
                         .unwrap_or(true)
-                    && !packet.meta().repair()
+                    && !packet.repair()
             })
-            .map(|packet| packet.meta_mut().set_discard(true))
+            .map(|packet| packet.set_discard(true))
             .count()
     });
     let (working_bank, root_bank) = {
@@ -219,7 +219,7 @@ fn run_shred_sigverify<const K: usize>(
         shred_buffer
             .par_iter_mut()
             .flatten()
-            .filter(|packet| !packet.meta().discard())
+            .filter(|packet| !packet.discard())
             .for_each(|packet| {
                 if maybe_verify_and_resign_packet(
                     packet,
@@ -233,7 +233,7 @@ fn run_shred_sigverify<const K: usize>(
                 )
                 .is_err()
                 {
-                    packet.meta_mut().set_discard(true);
+                    packet.set_discard(true);
                 }
             })
     });
@@ -242,7 +242,7 @@ fn run_shred_sigverify<const K: usize>(
     let (shreds, repairs): (Vec<_>, Vec<_>) = shred_buffer
         .iter()
         .flat_map(|batch| batch.iter())
-        .filter(|packet| !packet.meta().discard())
+        .filter(|packet| !packet.discard())
         .filter_map(|packet| {
             extract_shred_and_location(packet, repair_nonce_location_lookup, stats)
         })
@@ -317,7 +317,7 @@ fn maybe_verify_and_resign_packet(
     stats: &ShredSigVerifyStats,
     keypair: &Keypair,
 ) -> Result<(), ResignError> {
-    let repair = packet.meta().repair();
+    let repair = packet.repair();
     let shred = get_shred(packet).ok_or(shred::Error::InvalidPacketSize)?;
     let is_signed = is_retransmitter_signed_variant(shred)?;
     if is_signed {
@@ -444,7 +444,7 @@ fn get_slot_leaders<'a>(
     batches
         .iter_mut()
         .flat_map(|batch| batch.iter_mut())
-        .filter(|packet| !packet.meta().discard())
+        .filter(|packet| !packet.discard())
         .filter_map(move |packet| {
             let shred = shred::layout::get_shred(packet);
             let slot = shred.and_then(shred::layout::get_slot)?;
@@ -453,7 +453,7 @@ fn get_slot_leaders<'a>(
                 .map(|leader| leader.id)
                 .filter(|leader| leader != self_pubkey);
             if leader.is_none() {
-                packet.meta_mut().set_discard(true);
+                packet.set_discard(true);
             }
             Some((slot, leader))
         })
@@ -463,7 +463,7 @@ fn count_discards(packets: &[PacketBatch]) -> usize {
     packets
         .iter()
         .flat_map(|batch| batch.iter())
-        .filter(|packet| packet.meta().discard())
+        .filter(|packet| packet.discard())
         .count()
 }
 
@@ -665,8 +665,8 @@ mod tests {
                 &cache,
             )
         });
-        assert!(!batches[0].first().unwrap().meta().discard());
-        assert!(batches[0].get(1).unwrap().meta().discard());
+        assert!(!batches[0].get(0).unwrap().discard());
+        assert!(batches[0].get(1).unwrap().discard());
     }
 
     #[test_matrix(
@@ -720,7 +720,7 @@ mod tests {
             if is_last_in_slot {
                 let mut bytes_packet = shred.payload().to_bytes_packet(nonce);
                 if repaired {
-                    bytes_packet.meta_mut().flags |= PacketFlags::REPAIR;
+                    bytes_packet.insert_flags(PacketFlags::REPAIR);
                 }
                 let buf_addr = bytes_packet.buffer().as_ptr().addr();
                 maybe_verify_and_resign_packet(
@@ -734,7 +734,7 @@ mod tests {
                     &keypair,
                 )
                 .expect("packet should pass the verification");
-                assert!(!bytes_packet.meta().discard());
+                assert!(!bytes_packet.discard());
 
                 // Check whether the packet was modified.
                 let buf_addr_after = bytes_packet.buffer().as_ptr().addr();
@@ -742,7 +742,7 @@ mod tests {
             } else {
                 let mut bytes_packet = shred.payload().to_bytes_packet(nonce);
                 if repaired {
-                    bytes_packet.meta_mut().flags |= PacketFlags::REPAIR;
+                    bytes_packet.insert_flags(PacketFlags::REPAIR);
                 }
                 let buf_addr = bytes_packet.buffer().as_ptr().addr();
                 maybe_verify_and_resign_packet(
@@ -756,7 +756,7 @@ mod tests {
                     &keypair,
                 )
                 .expect("packet should pass the verification");
-                assert!(!bytes_packet.meta().discard());
+                assert!(!bytes_packet.discard());
 
                 // Packet should not be modified.
                 let buf_addr_after = bytes_packet.buffer().as_ptr().addr();
