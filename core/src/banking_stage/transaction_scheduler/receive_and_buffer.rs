@@ -904,7 +904,6 @@ mod tests {
         Arc::make_mut(&mut packet_batch)
             .first_mut()
             .unwrap()
-            .meta_mut()
             .set_discard(true);
         sender.send(packet_batch).unwrap();
 
