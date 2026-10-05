@@ -4,7 +4,6 @@ use {
     solana_account::{
         AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
     },
-    solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
     solana_sysvar_id::SysvarId,
@@ -37,12 +36,6 @@ fn required_data_len(sysvar_id: &Pubkey, serialized_len: usize) -> usize {
         .max(serialized_len)
 }
 
-fn new_account(lamports: u64, rent_epoch: Epoch, data_len: usize) -> AccountSharedData {
-    let mut account = AccountSharedData::new(lamports, data_len, &sysvar::id());
-    account.set_rent_epoch(rent_epoch);
-    account
-}
-
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) fn create_account<T>(sysvar: &T, fields: InheritableAccountFields) -> AccountSharedData
 where
@@ -51,12 +44,10 @@ where
     let serialized_len =
         wincode::serialized_size(sysvar).expect("failed to get serialized sysvar size") as usize;
     let (lamports, rent_epoch) = fields;
-    let mut account = new_account(
-        lamports,
-        rent_epoch,
-        required_data_len(&T::id(), serialized_len),
-    );
-    wincode::serialize_into(account.data_as_mut_slice(), sysvar).unwrap();
+    let mut data = Vec::with_capacity(required_data_len(&T::id(), serialized_len));
+    wincode::serialize_into(&mut data, sysvar).unwrap();
+    let mut account = AccountSharedData::new_with_data(lamports, data, &sysvar::id());
+    account.set_rent_epoch(rent_epoch);
     account
 }
 
