@@ -159,6 +159,23 @@ fn submit_speculative_jit_candidates(
     }
 }
 
+fn verify_transaction_with_speculative_jit(
+    bank: &Bank,
+    unsanitized: UnsanitizedTransactionView<Bytes>,
+    seen: &Mutex<HashSet<Pubkey>>,
+    submit: impl FnOnce(IndexSet<Pubkey>) -> result::Result<(), IndexSet<Pubkey>>,
+) -> Result<ReplayTransaction> {
+    let tx = bank.verify_transaction(unsanitized, TransactionVerificationMode::HashOnly)?;
+    // Leave vote-only rejection to the existing replay check, but do not speculate on a
+    // transaction that will fail that check.
+    if !bank.vote_only_bank() || is_valid_vote_only_transaction(&tx) {
+        // Address-table keys are now resolved. Include all keys for CPI coverage, not just
+        // top-level instruction program IDs.
+        submit_speculative_jit_candidates(seen, tx.account_keys().iter().copied(), submit);
+    }
+    Ok(tx)
+}
+
 #[derive(Default)]
 pub struct ExecuteBatchesInternalMetrics {
     execution_timings_per_thread: HashMap<usize, ThreadExecuteTimings>,
@@ -1709,34 +1726,27 @@ fn confirm_slot_entries(
         let bank = bank.clone_with_scheduler();
         let speculative_bank = Arc::downgrade(&bank.clone_without_scheduler());
         let seen = Mutex::new(HashSet::new());
-        let is_vote_only_bank = bank.vote_only_bank();
         move |unsanitized: UnsanitizedTransactionView<Bytes>| {
-            let tx = bank.verify_transaction(unsanitized, TransactionVerificationMode::HashOnly)?;
-            // Leave vote-only rejection to the existing replay check below, but do not
-            // speculate on a transaction that will fail that check.
-            if !is_vote_only_bank || is_valid_vote_only_transaction(&tx) {
-                // Address-table keys are now resolved. Submit before the batch-wide validation
-                // barrier, while other transactions are still being verified. Include all keys
-                // for CPI coverage, not just top-level instruction program IDs.
-                submit_speculative_jit_candidates(
-                    &seen,
-                    tx.account_keys().iter().copied(),
-                    |program_candidates| {
-                        speculative_jit_worker_pool()
-                            .try_send(SpeculativeJitJob {
-                                bank: speculative_bank.clone(),
-                                program_candidates,
-                            })
-                            .map_err(|err| {
-                                debug!(
-                                    "Failed to schedule a speculative JIT job at slot {slot}: {err}"
-                                );
-                                err.into_inner().program_candidates
-                            })
-                    },
-                );
-            }
-            Ok(tx)
+            // Submit before the batch-wide validation barrier, while other transactions are
+            // still being verified. The hook performs no program account loading itself.
+            verify_transaction_with_speculative_jit(
+                &bank,
+                unsanitized,
+                &seen,
+                |program_candidates| {
+                    speculative_jit_worker_pool()
+                        .try_send(SpeculativeJitJob {
+                            bank: speculative_bank.clone(),
+                            program_candidates,
+                        })
+                        .map_err(|err| {
+                            debug!(
+                                "Failed to schedule a speculative JIT job at slot {slot}: {err}"
+                            );
+                            err.into_inner().program_candidates
+                        })
+                },
+            )
         }
     };
 
@@ -2720,6 +2730,248 @@ pub mod tests {
             program_candidates: IndexSet::from([Pubkey::new_unique()]),
         }
         .run();
+    }
+
+    #[test]
+    fn test_speculative_jit_warms_alt_program_before_validation_returns() {
+        use {
+            solana_address_lookup_table_interface::state::{AddressLookupTable, LookupTableMeta},
+            solana_message::{VersionedMessage, v0},
+            solana_program_runtime::program_cache_entry::ProgramCacheEntryType,
+            solana_transaction::versioned::VersionedTransaction,
+            std::borrow::Cow,
+        };
+
+        struct CompileAndNotify {
+            job: SpeculativeJitJob,
+            done: Sender<String>,
+        }
+        impl WorkerJob for CompileAndNotify {
+            fn run(self) {
+                self.job.run();
+                self.done
+                    .send(thread::current().name().unwrap().to_owned())
+                    .unwrap();
+            }
+        }
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(100 * LAMPORTS_PER_SOL);
+        let (parent, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let bank = Arc::new(Bank::new_from_parent(parent, SlotLeader::default(), 1));
+        let program_id = Pubkey::new_unique();
+        let table_id = Pubkey::new_unique();
+        let mut program = AccountSharedData::new(
+            1,
+            0,
+            &solana_pubkey::pubkey!("BPFLoader2111111111111111111111111111111111"),
+        );
+        program.set_data_from_slice(include_bytes!(
+            "../../svm/tests/example-programs/hello-solana/hello_solana_program.so"
+        ));
+        program.set_executable(true);
+        bank.store_account(&program_id, &program);
+        let table = AddressLookupTable {
+            meta: LookupTableMeta::default(),
+            addresses: Cow::Owned(vec![program_id]),
+        };
+        let mut table_account =
+            AccountSharedData::new(1, 0, &solana_address_lookup_table_interface::program::id());
+        table_account.set_data_from_slice(&table.serialize_for_tests().unwrap());
+        bank.store_account(&table_id, &table_account);
+
+        // The SBF program is an ALT-loaded instruction account, not a top-level program ID.
+        let tx = VersionedTransaction {
+            signatures: vec![solana_signature::Signature::default()],
+            message: VersionedMessage::V0(v0::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                account_keys: vec![mint_keypair.pubkey(), Pubkey::default()],
+                recent_blockhash: bank.last_blockhash(),
+                instructions: vec![CompiledInstruction {
+                    program_id_index: 1,
+                    accounts: vec![2],
+                    data: vec![],
+                }],
+                address_table_lookups: vec![v0::MessageAddressTableLookup {
+                    account_key: table_id,
+                    writable_indexes: vec![],
+                    readonly_indexes: vec![0],
+                }],
+            }),
+        };
+        // More than 200 transactions exercises the real parallel-validation path.
+        let entries = entry_views_for_tests(
+            (0..201)
+                .map(|_| entry::next_versioned_entry(&bank.last_blockhash(), 1, vec![tx.clone()]))
+                .collect(),
+        );
+        let seen = Mutex::new(HashSet::new());
+        let (done_sender, done_receiver) = bounded(1);
+        let workers = WorkerPool::new("solSpecJitTest", 1, 1);
+        let checked = AtomicBool::new(false);
+        let start = Instant::now();
+        let verified = entry::validate_and_hash_transactions(
+            entries,
+            201,
+            transaction_hash_verify_thread_pool(),
+            |unsanitized| {
+                let tx = verify_transaction_with_speculative_jit(&bank, unsanitized, &seen, |program_candidates| {
+                    assert!(program_candidates.contains(&program_id));
+                    workers.try_send(CompileAndNotify {
+                        job: SpeculativeJitJob { bank: Arc::downgrade(&bank), program_candidates },
+                        done: done_sender.clone(),
+                    }).map_err(|err| err.into_inner().job.program_candidates)
+                })?;
+                if !checked.swap(true, Ordering::Relaxed) {
+                    // This callback has not returned, so the validation barrier cannot have
+                    // completed. Require actual background JIT, not just queue submission.
+                    let thread_name = done_receiver.recv_timeout(Duration::from_secs(30)).unwrap();
+                    assert_eq!(thread_name, "solSpecJitTest00");
+                    let cache = bank.get_transaction_processor().global_program_cache.read().unwrap();
+                    assert!(cache.get_slot_versions_for_tests(&program_id).iter().any(|entry| matches!(entry.program, ProgramCacheEntryType::Loaded(_))));
+                    eprintln!("ALT program compiled on {thread_name} before validation returned ({:?} from batch start)", start.elapsed());
+                }
+                Ok(tx)
+            },
+        ).unwrap();
+        assert!(checked.load(Ordering::Relaxed));
+        assert_eq!(verified.entries.len(), 201);
+
+        let compiled = bank
+            .get_transaction_processor()
+            .global_program_cache
+            .read()
+            .unwrap()
+            .get_slot_versions_for_tests(&program_id)[0]
+            .clone();
+        let hash = bank.last_blockhash();
+        let execution_tx = Transaction::new_signed_with_payer(
+            &[Instruction::new_with_bytes(program_id, &[], vec![])],
+            Some(&mint_keypair.pubkey()),
+            &[&mint_keypair],
+            hash,
+        );
+        confirm_slot_entries_for_tests(
+            &bank,
+            vec![Entry::new(&hash, 1, vec![execution_tx])],
+            false,
+            hash,
+        )
+        .unwrap();
+        assert_eq!(bank.transaction_count(), 1);
+        let cache = bank
+            .get_transaction_processor()
+            .global_program_cache
+            .read()
+            .unwrap();
+        assert!(
+            cache
+                .get_slot_versions_for_tests(&program_id)
+                .iter()
+                .any(|entry| Arc::ptr_eq(entry, &compiled))
+        );
+    }
+
+    #[test]
+    fn test_speculative_jit_validation_failure_preserves_error() {
+        use {
+            solana_message::{VersionedMessage, v0},
+            solana_transaction::versioned::VersionedTransaction,
+        };
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(100 * LAMPORTS_PER_SOL);
+        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let valid = system_transaction::transfer(
+            &mint_keypair,
+            &Pubkey::new_unique(),
+            1,
+            bank.last_blockhash(),
+        );
+        let missing_table = VersionedTransaction {
+            signatures: vec![solana_signature::Signature::default()],
+            message: VersionedMessage::V0(v0::Message {
+                header: MessageHeader {
+                    num_required_signatures: 1,
+                    num_readonly_signed_accounts: 0,
+                    num_readonly_unsigned_accounts: 1,
+                },
+                account_keys: vec![mint_keypair.pubkey(), Pubkey::default()],
+                recent_blockhash: bank.last_blockhash(),
+                instructions: vec![CompiledInstruction {
+                    program_id_index: 1,
+                    accounts: vec![2],
+                    data: vec![],
+                }],
+                address_table_lookups: vec![v0::MessageAddressTableLookup {
+                    account_key: Pubkey::new_unique(),
+                    writable_indexes: vec![],
+                    readonly_indexes: vec![0],
+                }],
+            }),
+        };
+        let entries = entry_views_for_tests(vec![entry::next_versioned_entry(
+            &bank.last_blockhash(),
+            1,
+            vec![valid.into(), missing_table],
+        )]);
+        let seen = Mutex::new(HashSet::new());
+        let submitted = AtomicUsize::new(0);
+        let result = entry::validate_and_hash_transactions(
+            entries,
+            2,
+            transaction_hash_verify_thread_pool(),
+            |unsanitized| {
+                verify_transaction_with_speculative_jit(&bank, unsanitized, &seen, |_| {
+                    submitted.fetch_add(1, Ordering::Relaxed);
+                    Ok(())
+                })
+            },
+        );
+        assert_eq!(result.err(), Some(TransactionError::AccountNotFound));
+        assert_eq!(submitted.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_speculative_jit_vote_only_replay_preserves_error() {
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(100 * LAMPORTS_PER_SOL);
+        let (parent, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let bank = Arc::new(Bank::new_from_parent_with_options(
+            parent,
+            SlotLeader::default(),
+            1,
+            NewBankOptions {
+                vote_only_bank: true,
+            },
+        ));
+        let hash = bank.last_blockhash();
+        let tx = system_transaction::transfer(&mint_keypair, &Pubkey::new_unique(), 1, hash);
+        let entries = vec![Entry::new(&hash, 1, vec![tx])];
+        let unsanitized = entry_views_for_tests(entries.clone())
+            .remove(0)
+            .transactions
+            .remove(0);
+        verify_transaction_with_speculative_jit(&bank, unsanitized, &Mutex::default(), |_| {
+            panic!("vote-only user transaction must not be submitted")
+        })
+        .unwrap();
+        assert_matches!(
+            confirm_slot_entries_for_tests(&bank, entries, false, hash),
+            Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(1))
+        );
     }
 
     fn create_tower_genesis_config(mint_lamports: u64) -> GenesisConfigInfo {
