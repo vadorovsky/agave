@@ -64,6 +64,7 @@ use {
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_vote::{vote_account::VoteAccountsHashMap, vote_parser::is_valid_vote_only_transaction},
     std::{
+        cell::RefCell,
         cmp,
         collections::{HashMap, HashSet},
         mem,
@@ -72,7 +73,7 @@ use {
         path::PathBuf,
         result,
         sync::{
-            Arc, Mutex, OnceLock, RwLock, Weak,
+            Arc, OnceLock, RwLock, Weak,
             atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         time::{Duration, Instant},
@@ -140,29 +141,49 @@ fn speculative_jit_worker_pool() -> &'static WorkerPool<SpeculativeJitJob> {
         .get_or_init(|| WorkerPool::new("solSpecJit", 1, MAX_FEC_SETS_PER_SLOT as usize))
 }
 
-/// Deduplicate across concurrent validation callbacks without blocking on the worker queue.
+/// Identity for one validation batch, without retaining its bank.
+#[derive(Default)]
+struct SpeculativeJitSeen(Arc<()>);
+
+thread_local! {
+    // Cache only the last batch on each thread. Cross-thread duplicates and resubmissions
+    // after interleaving batches are acceptable for best-effort speculative compilation.
+    static SPECULATIVE_JIT_SEEN: RefCell<(Weak<()>, HashSet<Pubkey>)> =
+        RefCell::new((Weak::new(), HashSet::new()));
+}
+
+/// Deduplicate per thread without blocking on the worker queue.
 /// A rejected submission returns its candidates so later transactions can retry them.
 fn submit_speculative_jit_candidates(
-    seen: &Mutex<HashSet<Pubkey>>,
+    seen: &SpeculativeJitSeen,
     candidates: impl Iterator<Item = Pubkey>,
     submit: impl FnOnce(IndexSet<Pubkey>) -> result::Result<(), IndexSet<Pubkey>>,
 ) {
-    let mut seen = seen.lock().unwrap();
-    let candidates: IndexSet<_> = candidates.filter(|key| seen.insert(*key)).collect();
-    if candidates.is_empty() {
-        return;
-    }
-    if let Err(candidates) = submit(candidates) {
-        for key in candidates {
-            seen.remove(&key);
+    SPECULATIVE_JIT_SEEN.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let (batch, keys) = &mut *cache;
+        // The retained Weak prevents allocation address reuse, even after its batch is
+        // dropped. Only downgrade on a batch change, not on every validation callback.
+        if batch.as_ptr() != Arc::as_ptr(&seen.0) {
+            *batch = Arc::downgrade(&seen.0);
+            keys.clear();
         }
-    }
+        let candidates: IndexSet<_> = candidates.filter(|key| keys.insert(*key)).collect();
+        if candidates.is_empty() {
+            return;
+        }
+        if let Err(candidates) = submit(candidates) {
+            for key in candidates {
+                keys.remove(&key);
+            }
+        }
+    });
 }
 
 fn verify_transaction_with_speculative_jit(
     bank: &Bank,
     unsanitized: UnsanitizedTransactionView<Bytes>,
-    seen: &Mutex<HashSet<Pubkey>>,
+    seen: &SpeculativeJitSeen,
     submit: impl FnOnce(IndexSet<Pubkey>) -> result::Result<(), IndexSet<Pubkey>>,
 ) -> Result<ReplayTransaction> {
     let tx = bank.verify_transaction(unsanitized, TransactionVerificationMode::HashOnly)?;
@@ -1725,7 +1746,7 @@ fn confirm_slot_entries(
     let validate_and_hash_transaction = {
         let bank = bank.clone_with_scheduler();
         let speculative_bank = Arc::downgrade(&bank.clone_without_scheduler());
-        let seen = Mutex::new(HashSet::new());
+        let seen = SpeculativeJitSeen::default();
         move |unsanitized: UnsanitizedTransactionView<Bytes>| {
             // Submit before the batch-wide validation barrier, while other transactions are
             // still being verified. The hook performs no program account loading itself.
@@ -2661,7 +2682,7 @@ pub mod tests {
 
     #[test]
     fn test_speculative_jit_candidates_deduplicate() {
-        let seen = Mutex::new(HashSet::new());
+        let seen = SpeculativeJitSeen::default();
         let keys = [
             Pubkey::new_unique(),
             Pubkey::new_unique(),
@@ -2689,14 +2710,16 @@ pub mod tests {
 
     #[test]
     fn test_speculative_jit_candidates_retry_rejected_submission() {
-        let seen = Mutex::new(HashSet::new());
+        let seen = SpeculativeJitSeen::default();
         let keys = [Pubkey::new_unique(), Pubkey::new_unique()];
         submit_speculative_jit_candidates(&seen, std::iter::once(keys[0]), |_| Ok(()));
         submit_speculative_jit_candidates(&seen, keys.into_iter(), |keys_to_send| {
             assert_eq!(keys_to_send.iter().copied().collect::<Vec<_>>(), keys[1..]);
             Err(keys_to_send)
         });
-        assert_eq!(*seen.lock().unwrap(), HashSet::from([keys[0]]));
+        SPECULATIVE_JIT_SEEN.with(|cache| {
+            assert_eq!(cache.borrow().1, HashSet::from([keys[0]]));
+        });
         submit_speculative_jit_candidates(&seen, keys.into_iter(), |keys_to_send| {
             assert_eq!(keys_to_send.into_iter().collect::<Vec<_>>(), keys[1..]);
             Ok(())
@@ -2705,7 +2728,7 @@ pub mod tests {
 
     #[test]
     fn test_speculative_jit_candidates_concurrent_submission() {
-        let seen = Mutex::new(HashSet::new());
+        let seen = SpeculativeJitSeen::default();
         let submitted = Mutex::new(Vec::new());
         let keys = [Pubkey::new_unique(), Pubkey::new_unique()];
         let barrier = Barrier::new(4);
@@ -2717,10 +2740,36 @@ pub mod tests {
                         submitted.lock().unwrap().extend(keys_to_send);
                         Ok(())
                     });
+                    submit_speculative_jit_candidates(&seen, keys.into_iter(), |_| {
+                        panic!("each thread must suppress repeated submissions")
+                    });
                 });
             }
         });
-        assert_eq!(*submitted.lock().unwrap(), keys);
+        assert_eq!(*submitted.lock().unwrap(), keys.repeat(4));
+    }
+
+    #[test]
+    fn test_speculative_jit_candidates_switch_batches() {
+        let first = SpeculativeJitSeen::default();
+        let second = SpeculativeJitSeen::default();
+        let key = Pubkey::new_unique();
+        for seen in [&first, &second, &first] {
+            submit_speculative_jit_candidates(seen, std::iter::once(key), |candidates| {
+                assert_eq!(candidates.into_iter().collect::<Vec<_>>(), [key]);
+                Ok(())
+            });
+            submit_speculative_jit_candidates(seen, std::iter::once(key), |_| {
+                panic!("repeated submissions in the current batch must be suppressed")
+            });
+        }
+        drop(first);
+        drop(second);
+        let next = SpeculativeJitSeen::default();
+        submit_speculative_jit_candidates(&next, std::iter::once(key), |candidates| {
+            assert_eq!(candidates.into_iter().collect::<Vec<_>>(), [key]);
+            Ok(())
+        });
     }
 
     #[test]
@@ -2812,8 +2861,8 @@ pub mod tests {
                 .map(|_| entry::next_versioned_entry(&bank.last_blockhash(), 1, vec![tx.clone()]))
                 .collect(),
         );
-        let seen = Mutex::new(HashSet::new());
-        let (done_sender, done_receiver) = bounded(1);
+        let seen = SpeculativeJitSeen::default();
+        let (done_sender, done_receiver) = crossbeam_channel::unbounded();
         let workers = WorkerPool::new("solSpecJitTest", 1, 1);
         let checked = AtomicBool::new(false);
         let start = Instant::now();
@@ -2843,6 +2892,8 @@ pub mod tests {
         ).unwrap();
         assert!(checked.load(Ordering::Relaxed));
         assert_eq!(verified.entries.len(), 201);
+        // Drain all accepted jobs while the notification receiver is still alive.
+        drop(workers);
 
         let compiled = bank
             .get_transaction_processor()
@@ -2924,7 +2975,7 @@ pub mod tests {
             1,
             vec![valid.into(), missing_table],
         )]);
-        let seen = Mutex::new(HashSet::new());
+        let seen = SpeculativeJitSeen::default();
         let submitted = AtomicUsize::new(0);
         let result = entry::validate_and_hash_transactions(
             entries,
@@ -2964,9 +3015,12 @@ pub mod tests {
             .remove(0)
             .transactions
             .remove(0);
-        verify_transaction_with_speculative_jit(&bank, unsanitized, &Mutex::default(), |_| {
-            panic!("vote-only user transaction must not be submitted")
-        })
+        verify_transaction_with_speculative_jit(
+            &bank,
+            unsanitized,
+            &SpeculativeJitSeen::default(),
+            |_| panic!("vote-only user transaction must not be submitted"),
+        )
         .unwrap();
         assert_matches!(
             confirm_slot_entries_for_tests(&bank, entries, false, hash),
