@@ -2773,6 +2773,37 @@ pub mod tests {
     }
 
     #[test]
+    fn test_speculative_jit_candidates_independent_thread_progress() {
+        let seen = SpeculativeJitSeen::default();
+        let key = Pubkey::new_unique();
+        let (entered_sender, entered_receiver) = bounded(2);
+        let (release_sender, release_receiver) = bounded::<()>(0);
+        thread::scope(|scope| {
+            for _ in 0..2 {
+                scope.spawn(|| {
+                    submit_speculative_jit_candidates(&seen, std::iter::once(key), |candidates| {
+                        assert_eq!(candidates.into_iter().collect::<Vec<_>>(), [key]);
+                        entered_sender.send(()).unwrap();
+                        // Keep this submission open while another validation thread enters
+                        // its own submission. A shared deduplication lock prevents this.
+                        let _ = release_receiver.recv();
+                        Ok(())
+                    });
+                });
+            }
+            let first = entered_receiver.recv_timeout(Duration::from_secs(5));
+            let second = entered_receiver.recv_timeout(Duration::from_secs(5));
+            // Unblock both threads even if an assertion below fails.
+            drop(release_sender);
+            assert!(first.is_ok(), "first submission did not start: {first:?}");
+            assert!(
+                second.is_ok(),
+                "submissions serialized across threads: {second:?}"
+            );
+        });
+    }
+
+    #[test]
     fn test_speculative_jit_job_skips_expired_bank() {
         SpeculativeJitJob {
             bank: Weak::new(),
