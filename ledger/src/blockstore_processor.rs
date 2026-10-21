@@ -72,7 +72,7 @@ use {
         path::PathBuf,
         result,
         sync::{
-            Arc, OnceLock, RwLock, Weak,
+            Arc, Mutex, OnceLock, RwLock, Weak,
             atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         time::{Duration, Instant},
@@ -122,9 +122,10 @@ impl WorkerJob for SpeculativeJitJob {
             bank,
             program_candidates,
         } = self;
-        let bank = bank
-            .upgrade()
-            .expect("failed to upgrade a weak reference to the bank in a speculative JIT job");
+        // Best-effort jobs can outlive a bank, including when validation fails after enqueueing.
+        let Some(bank) = bank.upgrade() else {
+            return;
+        };
         bank.get_transaction_processor()
             .precompile_programs(bank.as_ref(), program_candidates.iter());
     }
@@ -132,11 +133,30 @@ impl WorkerJob for SpeculativeJitJob {
 
 fn speculative_jit_worker_pool() -> &'static WorkerPool<SpeculativeJitJob> {
     // A single worker bounds the CPU cost of best-effort compilation while transaction execution
-    // is already consuming the replay scheduler's workers. Programs are queued in first-use order,
-    // maximizing the chance that the next cold program is ready before execution reaches it.
+    // is already consuming the replay scheduler's workers. Candidates are queued as transactions
+    // finish validation, which can be out of ledger order during parallel verification.
     static SPECULATIVE_JIT_WORKER_POOL: OnceLock<WorkerPool<SpeculativeJitJob>> = OnceLock::new();
     SPECULATIVE_JIT_WORKER_POOL
         .get_or_init(|| WorkerPool::new("solSpecJit", 1, MAX_FEC_SETS_PER_SLOT as usize))
+}
+
+/// Deduplicate across concurrent validation callbacks without blocking on the worker queue.
+/// A rejected submission returns its candidates so later transactions can retry them.
+fn submit_speculative_jit_candidates(
+    seen: &Mutex<HashSet<Pubkey>>,
+    candidates: impl Iterator<Item = Pubkey>,
+    submit: impl FnOnce(IndexSet<Pubkey>) -> result::Result<(), IndexSet<Pubkey>>,
+) {
+    let mut seen = seen.lock().unwrap();
+    let candidates: IndexSet<_> = candidates.filter(|key| seen.insert(*key)).collect();
+    if candidates.is_empty() {
+        return;
+    }
+    if let Err(candidates) = submit(candidates) {
+        for key in candidates {
+            seen.remove(&key);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -1687,8 +1707,36 @@ fn confirm_slot_entries(
 
     let validate_and_hash_transaction = {
         let bank = bank.clone_with_scheduler();
+        let speculative_bank = Arc::downgrade(&bank.clone_without_scheduler());
+        let seen = Mutex::new(HashSet::new());
+        let is_vote_only_bank = bank.vote_only_bank();
         move |unsanitized: UnsanitizedTransactionView<Bytes>| {
-            bank.verify_transaction(unsanitized, TransactionVerificationMode::HashOnly)
+            let tx = bank.verify_transaction(unsanitized, TransactionVerificationMode::HashOnly)?;
+            // Leave vote-only rejection to the existing replay check below, but do not
+            // speculate on a transaction that will fail that check.
+            if !is_vote_only_bank || is_valid_vote_only_transaction(&tx) {
+                // Address-table keys are now resolved. Submit before the batch-wide validation
+                // barrier, while other transactions are still being verified. Include all keys
+                // for CPI coverage, not just top-level instruction program IDs.
+                submit_speculative_jit_candidates(
+                    &seen,
+                    tx.account_keys().iter().copied(),
+                    |program_candidates| {
+                        speculative_jit_worker_pool()
+                            .try_send(SpeculativeJitJob {
+                                bank: speculative_bank.clone(),
+                                program_candidates,
+                            })
+                            .map_err(|err| {
+                                debug!(
+                                    "Failed to schedule a speculative JIT job at slot {slot}: {err}"
+                                );
+                                err.into_inner().program_candidates
+                            })
+                    },
+                );
+            }
+            Ok(tx)
         }
     };
 
@@ -1737,25 +1785,20 @@ fn confirm_slot_entries(
 
     let mut replay_timer = Measure::start("replay_elapsed");
     let is_vote_only_bank = bank.vote_only_bank();
-    let mut program_candidates = IndexSet::new();
     let replay_entries: Vec<_> = entries
         .into_iter()
         .zip(entry_tx_starting_indexes)
         .map(|(entry, tx_starting_index)| {
-            if let EntryType::Transactions(ref transactions) = entry {
-                for tx in transactions {
-                    // If bank is in vote-only mode, validate that entries contain only vote
-                    // transactions.
-                    if is_vote_only_bank && !is_valid_vote_only_transaction(tx) {
-                        return Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(
-                            bank.slot(),
-                        ));
-                    }
-                    // `tx.program_instructions_iter()` would give us only top-level instruction
-                    // program IDs. We want CPI program IDs as well, and the only reliable way to
-                    // retrieve them is to retrieve all account keys.
-                    program_candidates.extend(tx.account_keys().iter().copied());
-                }
+            // If bank is in vote-only mode, validate that entries contain only vote transactions.
+            if is_vote_only_bank
+                && let EntryType::Transactions(ref transactions) = entry
+                && transactions
+                    .iter()
+                    .any(|tx| !is_valid_vote_only_transaction(tx))
+            {
+                return Err(BlockstoreProcessorError::UserTransactionsInVoteOnlyBank(
+                    bank.slot(),
+                ));
             }
             Ok(ReplayEntry {
                 entry,
@@ -1763,19 +1806,6 @@ fn confirm_slot_entries(
             })
         })
         .collect::<result::Result<Vec<_>, _>>()?;
-
-    if !program_candidates.is_empty() {
-        let bank: Weak<Bank> = Arc::downgrade(&bank.clone_without_scheduler());
-        if let Err(err) = speculative_jit_worker_pool().try_send(SpeculativeJitJob {
-            bank,
-            program_candidates,
-        }) {
-            warn!(
-                "Failed to schedule a speculative JIT job at slot {slot}, programs are not going \
-                 to be precompiled: {err}"
-            );
-        }
-    }
 
     let process_result =
         process_entries(bank, replay_entries).map_err(BlockstoreProcessorError::from);
@@ -2618,6 +2648,79 @@ pub mod tests {
         test_case::test_case,
         trees::tr,
     };
+
+    #[test]
+    fn test_speculative_jit_candidates_deduplicate() {
+        let seen = Mutex::new(HashSet::new());
+        let keys = [
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        ];
+        submit_speculative_jit_candidates(
+            &seen,
+            [keys[0], keys[1], keys[0]].into_iter(),
+            |keys_to_send| {
+                assert_eq!(keys_to_send.into_iter().collect::<Vec<_>>(), keys[..2]);
+                Ok(())
+            },
+        );
+        submit_speculative_jit_candidates(&seen, [keys[1], keys[2]].into_iter(), |keys_to_send| {
+            assert_eq!(keys_to_send.into_iter().collect::<Vec<_>>(), keys[2..]);
+            Ok(())
+        });
+        submit_speculative_jit_candidates(&seen, keys.into_iter(), |_| {
+            panic!("already submitted candidates must not be queued again")
+        });
+        submit_speculative_jit_candidates(&seen, std::iter::empty(), |_| {
+            panic!("empty jobs must not be queued")
+        });
+    }
+
+    #[test]
+    fn test_speculative_jit_candidates_retry_rejected_submission() {
+        let seen = Mutex::new(HashSet::new());
+        let keys = [Pubkey::new_unique(), Pubkey::new_unique()];
+        submit_speculative_jit_candidates(&seen, std::iter::once(keys[0]), |_| Ok(()));
+        submit_speculative_jit_candidates(&seen, keys.into_iter(), |keys_to_send| {
+            assert_eq!(keys_to_send.iter().copied().collect::<Vec<_>>(), keys[1..]);
+            Err(keys_to_send)
+        });
+        assert_eq!(*seen.lock().unwrap(), HashSet::from([keys[0]]));
+        submit_speculative_jit_candidates(&seen, keys.into_iter(), |keys_to_send| {
+            assert_eq!(keys_to_send.into_iter().collect::<Vec<_>>(), keys[1..]);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_speculative_jit_candidates_concurrent_submission() {
+        let seen = Mutex::new(HashSet::new());
+        let submitted = Mutex::new(Vec::new());
+        let keys = [Pubkey::new_unique(), Pubkey::new_unique()];
+        let barrier = Barrier::new(4);
+        thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    barrier.wait();
+                    submit_speculative_jit_candidates(&seen, keys.into_iter(), |keys_to_send| {
+                        submitted.lock().unwrap().extend(keys_to_send);
+                        Ok(())
+                    });
+                });
+            }
+        });
+        assert_eq!(*submitted.lock().unwrap(), keys);
+    }
+
+    #[test]
+    fn test_speculative_jit_job_skips_expired_bank() {
+        SpeculativeJitJob {
+            bank: Weak::new(),
+            program_candidates: IndexSet::from([Pubkey::new_unique()]),
+        }
+        .run();
+    }
 
     fn create_tower_genesis_config(mint_lamports: u64) -> GenesisConfigInfo {
         create_genesis_config_with_tower_leader(
