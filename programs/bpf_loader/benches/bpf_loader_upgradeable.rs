@@ -50,15 +50,15 @@ mod bench {
             let transaction_accounts = vec![
                 (
                     buffer_address,
-                    AccountSharedData::new(
+                    AccountSharedData::new_with_data(
                         ACCOUNT_BALANCE,
-                        UpgradeableLoaderState::size_of_buffer(PROGRAM_BUFFER_SIZE),
+                        vec![0; UpgradeableLoaderState::size_of_buffer(PROGRAM_BUFFER_SIZE)],
                         &loader_address,
                     ),
                 ),
                 (
                     authority_address,
-                    AccountSharedData::new(ACCOUNT_BALANCE, 0, &loader_address),
+                    AccountSharedData::empty(ACCOUNT_BALANCE, &loader_address),
                 ),
             ];
 
@@ -124,7 +124,7 @@ mod bench {
                 .unwrap();
             self.transaction_accounts.push((
                 new_authority_address,
-                AccountSharedData::new(ACCOUNT_BALANCE, 0, &self.loader_address),
+                AccountSharedData::empty(ACCOUNT_BALANCE, &self.loader_address),
             ));
             let instruction = if checked {
                 UpgradeableLoaderInstruction::SetAuthorityChecked

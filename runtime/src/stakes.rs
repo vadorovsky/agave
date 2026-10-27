@@ -1402,7 +1402,7 @@ pub(crate) mod tests {
         // not a stake account, and whacks above entry
         stakes_cache.check_and_store(
             &stake_pubkey,
-            &AccountSharedData::new(1, 0, &stake::program::id()),
+            &AccountSharedData::empty(1, &stake::program::id()),
             None,
             false,
             false,
@@ -1560,10 +1560,13 @@ pub(crate) mod tests {
         let ((vote_pubkey, vote_account), (stake_pubkey, stake_account)) =
             create_staked_node_accounts(10, &Rent::default());
         let undelegated_pubkey = Pubkey::new_unique();
-        let undelegated_account =
-            AccountSharedData::new(1, StakeStateV2::size_of(), &stake::program::id());
+        let undelegated_account = AccountSharedData::new_with_data(
+            1,
+            vec![0; StakeStateV2::size_of()],
+            &stake::program::id(),
+        );
         let other_pubkey = Pubkey::new_unique();
-        let other_account = AccountSharedData::new(1, 0, &Pubkey::default());
+        let other_account = AccountSharedData::empty(1, &Pubkey::default());
         let missing_pubkey = Pubkey::new_unique();
         let accounts = [
             (vote_pubkey, vote_account.clone()),

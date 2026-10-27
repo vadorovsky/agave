@@ -53,9 +53,9 @@ fn test_bank_load_program() {
     program_account.set_executable(true);
     program_account.set_rent_epoch(1);
     let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
-    let mut programdata_account = AccountSharedData::new(
+    let mut programdata_account = AccountSharedData::new_with_data(
         40,
-        programdata_data_offset + elf.len(),
+        vec![0; programdata_data_offset + elf.len()],
         &bpf_loader_upgradeable::id(),
     );
     programdata_account

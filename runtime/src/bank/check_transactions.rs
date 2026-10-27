@@ -436,9 +436,9 @@ mod tests {
         ));
 
         let nonce_account = bank.get_account(&nonce_pubkey).unwrap();
-        let mut resized_nonce_account = AccountSharedData::new(
+        let mut resized_nonce_account = AccountSharedData::new_with_data(
             nonce_account.lamports(),
-            NonceState::size() + 1,
+            vec![0; NonceState::size() + 1],
             nonce_account.owner(),
         );
         resized_nonce_account.data_as_mut_slice()[..nonce_account.data().len()]

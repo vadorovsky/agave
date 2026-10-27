@@ -836,9 +836,9 @@ mod tests {
         drop(stakes_cache);
 
         let overflowing_account = Pubkey::new_unique();
-        let mut stake_account = AccountSharedData::new(
+        let mut stake_account = AccountSharedData::new_with_data(
             u64::MAX - stake_reward - block_reward + 1,
-            StakeStateV2::size_of(),
+            vec![0; StakeStateV2::size_of()],
             &solana_stake_interface::program::id(),
         );
         stake_account
@@ -878,9 +878,9 @@ mod tests {
         let successful_account = Pubkey::new_unique();
         let starting_stake = new_stake.delegation.stake - stake_reward;
         let starting_lamports = rent_exempt_reserve + starting_stake;
-        let mut stake_account = AccountSharedData::new(
+        let mut stake_account = AccountSharedData::new_with_data(
             starting_lamports,
-            StakeStateV2::size_of(),
+            vec![0; StakeStateV2::size_of()],
             &solana_stake_interface::program::id(),
         );
         let other_stake = Stake {
@@ -911,9 +911,9 @@ mod tests {
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         let expected_lamports = starting_lamports + stake_reward + block_reward;
-        let mut expected_stake_account = AccountSharedData::new(
+        let mut expected_stake_account = AccountSharedData::new_with_data(
             expected_lamports,
-            StakeStateV2::size_of(),
+            vec![0; StakeStateV2::size_of()],
             &solana_stake_interface::program::id(),
         );
         expected_stake_account
@@ -961,9 +961,9 @@ mod tests {
         };
         let starting_stake = deactivating_stake.delegation.stake - stake_reward;
         let starting_lamports = rent_exempt_reserve + starting_stake;
-        let mut stake_account = AccountSharedData::new(
+        let mut stake_account = AccountSharedData::new_with_data(
             starting_lamports,
-            StakeStateV2::size_of(),
+            vec![0; StakeStateV2::size_of()],
             &solana_stake_interface::program::id(),
         );
         let other_stake = Stake {
@@ -995,9 +995,9 @@ mod tests {
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         let expected_lamports = starting_lamports + stake_reward;
-        let mut expected_stake_account = AccountSharedData::new(
+        let mut expected_stake_account = AccountSharedData::new_with_data(
             expected_lamports,
-            StakeStateV2::size_of(),
+            vec![0; StakeStateV2::size_of()],
             &solana_stake_interface::program::id(),
         );
         expected_stake_account

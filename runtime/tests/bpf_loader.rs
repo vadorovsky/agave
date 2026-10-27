@@ -136,9 +136,9 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
 
     // Setup accounts
     let buffer_account = {
-        let mut account = AccountSharedData::new(
+        let mut account = AccountSharedData::new_with_data(
             min_buffer_balance,
-            UpgradeableLoaderState::size_of_buffer(elf.len()),
+            vec![0; UpgradeableLoaderState::size_of_buffer(elf.len())],
             &bpf_loader_upgradeable::id(),
         );
         account
@@ -153,9 +153,9 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
             .copy_from_slice(&elf);
         account
     };
-    let program_account = AccountSharedData::new(
+    let program_account = AccountSharedData::new_with_data(
         min_program_balance,
-        UpgradeableLoaderState::size_of_program(),
+        vec![0; UpgradeableLoaderState::size_of_program()],
         &bpf_loader_upgradeable::id(),
     );
 
@@ -208,9 +208,8 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .saturating_sub(min_buffer_balance.saturating_add(deploy_fees));
     bank.store_account(
         &payer_keypair.pubkey(),
-        &AccountSharedData::new(
+        &AccountSharedData::empty(
             payer_base_balance.saturating_add(min_payer_balance),
-            0,
             &system_program::id(),
         ),
     );
@@ -342,9 +341,9 @@ fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
 
     // Setup accounts
     let buffer_account = {
-        let mut account = AccountSharedData::new(
+        let mut account = AccountSharedData::new_with_data(
             min_buffer_balance,
-            UpgradeableLoaderState::size_of_buffer(elf.len()),
+            vec![0; UpgradeableLoaderState::size_of_buffer(elf.len())],
             &bpf_loader_upgradeable::id(),
         );
         account
@@ -371,9 +370,8 @@ fn test_bpf_loader_upgradeable_deploy_with_more_than_255_accounts() {
         .saturating_sub(min_buffer_balance.saturating_add(deploy_fees));
     bank.store_account(
         &payer_keypair.pubkey(),
-        &AccountSharedData::new(
+        &AccountSharedData::empty(
             payer_base_balance.saturating_add(min_payer_balance),
-            0,
             &system_program::id(),
         ),
     );

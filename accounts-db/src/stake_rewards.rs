@@ -154,8 +154,11 @@ fn create_stake_account(
     rent: &Rent,
     lamports: u64,
 ) -> AccountSharedData {
-    let mut stake_account =
-        AccountSharedData::new(lamports, StakeStateV2::size_of(), &stake_program::id());
+    let mut stake_account = AccountSharedData::new_with_data(
+        lamports,
+        vec![0; StakeStateV2::size_of()],
+        &stake_program::id(),
+    );
 
     let vote_state =
         vote_state::VoteStateV4::deserialize(vote_account.data(), voter_pubkey).unwrap();

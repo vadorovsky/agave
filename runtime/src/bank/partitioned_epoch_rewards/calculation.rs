@@ -1472,9 +1472,9 @@ mod tests {
             },
             credits_observed: vote_credits,
         };
-        let mut account = AccountSharedData::new(
+        let mut account = AccountSharedData::new_with_data(
             rent_exempt_reserve + non_rent_lamports,
-            StakeStateV2::size_of(),
+            vec![0; StakeStateV2::size_of()],
             &solana_stake_interface::program::id(),
         );
         account
@@ -1945,9 +1945,9 @@ mod tests {
         vote_address: &Pubkey,
         activation_epoch: Epoch,
     ) -> AccountSharedData {
-        let mut stake_account = AccountSharedData::new(
+        let mut stake_account = AccountSharedData::new_with_data(
             lamports,
-            StakeStateV2::size_of(),
+            vec![0; StakeStateV2::size_of()],
             &solana_sdk_ids::stake::id(),
         );
         let rent_exempt_reserve = lamports.saturating_sub(delegation);
@@ -1997,9 +1997,9 @@ mod tests {
                     &identity.pubkey(),
                     &Clock::default(),
                 );
-                let mut account = solana_account::AccountSharedData::new(
+                let mut account = solana_account::AccountSharedData::new_with_data(
                     *balance,
-                    VoteStateV4::size_of(),
+                    vec![0; VoteStateV4::size_of()],
                     &solana_vote_program::id(),
                 );
                 account
@@ -4167,9 +4167,8 @@ mod tests {
             // system account with lamports, success
             (
                 Pubkey::new_unique(),
-                Some(AccountSharedData::new(
+                Some(AccountSharedData::empty(
                     LAMPORTS_PER_SOL,
-                    0,
                     &solana_sdk_ids::system_program::id(),
                 )),
                 true,
@@ -4181,9 +4180,8 @@ mod tests {
             // non-rent-exempt system account with 1 lamport, success with relaxed checks
             (
                 Pubkey::new_unique(),
-                Some(AccountSharedData::new(
+                Some(AccountSharedData::empty(
                     1,
-                    0,
                     &solana_sdk_ids::system_program::id(),
                 )),
                 true,
@@ -4191,9 +4189,8 @@ mod tests {
             // invalid owner, no commission
             (
                 Pubkey::new_unique(),
-                Some(AccountSharedData::new(
+                Some(AccountSharedData::empty(
                     LAMPORTS_PER_SOL,
-                    0,
                     &Pubkey::new_unique(),
                 )),
                 false,
@@ -4399,7 +4396,7 @@ mod tests {
         let invalid_collector = Pubkey::new_unique();
         bank.store_account(
             &invalid_collector,
-            &AccountSharedData::new(LAMPORTS_PER_SOL, 0, &Pubkey::new_unique()),
+            &AccountSharedData::empty(LAMPORTS_PER_SOL, &Pubkey::new_unique()),
         );
 
         // Point the vote account at the invalid collector and advance to the reward
@@ -4679,9 +4676,9 @@ mod tests {
                 &Clock::default(),
             );
             vote_state.pending_delegator_rewards = pending_delegator_rewards;
-            let mut account = solana_account::AccountSharedData::new(
+            let mut account = solana_account::AccountSharedData::new_with_data(
                 1_000_000_000,
-                VoteStateV4::size_of(),
+                vec![0; VoteStateV4::size_of()],
                 &solana_vote_program::id(),
             );
             account
