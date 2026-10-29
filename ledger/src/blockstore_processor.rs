@@ -130,9 +130,10 @@ impl WorkerJob for SpeculativeJitJob {
             top_level_programs,
             guess_program_candidates,
         } = self;
-        let bank = bank
-            .upgrade()
-            .expect("failed to upgrade a weak reference to the bank in a speculative JIT job");
+        // The job holds only a weak reference, and this pool outlives any bank.
+        // The bank may have been dropped (rooted-and-cleared, or its fork
+        // abandoned) before the job runs. In that case, skip the job.
+        let Some(bank) = bank.upgrade() else { return };
         let program_loader = bank.get_transaction_processor();
         // Top-level programs are the critical ones: compiling them first gives
         // them the best chance of being ready in the global cache before
