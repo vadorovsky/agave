@@ -21,8 +21,10 @@ use {
 
 mod results;
 
-pub use agave_wake_channel::TrySendError;
-pub use results::{ResultRecvError, ResultWorkerPool};
+pub use {
+    agave_wake_channel::TrySendError,
+    results::{ResultRecvError, ResultWorkerPool},
+};
 
 /// Byte length limit of a Linux thread name. Linux truncates longer names.
 pub const MAX_THREAD_NAME_LEN: usize = 15;
