@@ -1835,7 +1835,7 @@ fn confirm_slot_entries(
     // set to avoid redundant account loads in the best-effort pass.
     guess_program_candidates.retain(|key| !top_level_programs.contains(key));
     if !top_level_programs.is_empty() || !guess_program_candidates.is_empty() {
-        let bank: Weak<Bank> = Arc::downgrade(&bank.clone_without_scheduler());
+        let bank: Weak<Bank> = Arc::downgrade(&bank);
         if let Err(err) = speculative_jit_worker_pool().try_send(SpeculativeJitJob {
             bank,
             top_level_programs,
