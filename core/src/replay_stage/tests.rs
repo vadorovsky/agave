@@ -159,6 +159,7 @@ impl ProcessActiveBanksContext {
         let (votor_event_sender, _) = bounded(1024);
         let migration_status = Arc::new(MigrationStatus::default());
         let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+        let speculative_jit_worker_pool = SpeculativeJitWorkerPool::new();
         Self {
             bank_forks,
             blockstore,
@@ -175,6 +176,7 @@ impl ProcessActiveBanksContext {
             votor_event_sender,
             replay_mode: ForkReplayMode::Serial,
             replay_verification_worker_pool,
+            speculative_jit_worker_pool,
             migration_status,
         }
     }
@@ -6895,12 +6897,14 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
     let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
     let shred_version = compute_shred_version(&genesis_config.hash(), None);
     let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+    let speculative_jit_worker_pool = SpeculativeJitWorkerPool::new();
 
     process_bank_0(
         &bank0,
         shred_version,
         &blockstore,
         &replay_verification_worker_pool,
+        &speculative_jit_worker_pool,
         &ProcessOptions::default(),
         None,
         None,
@@ -6922,6 +6926,7 @@ fn test_initialize_progress_and_fork_choice_with_duplicates() {
         &bank1,
         shred_version,
         &replay_verification_worker_pool,
+        &speculative_jit_worker_pool,
         &ProcessOptions::default(),
         &mut ConfirmationProgress::new(bank0.last_blockhash()),
         None,

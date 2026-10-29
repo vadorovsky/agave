@@ -130,9 +130,9 @@ impl WorkerJob for SpeculativeJitJob {
             top_level_programs,
             guess_program_candidates,
         } = self;
-        // The job holds only a weak reference, and this pool outlives any bank.
-        // The bank may have been dropped (rooted-and-cleared, or its fork
-        // abandoned) before the job runs. In that case, skip the job.
+        // The job holds only a weak reference, so the bank may have been
+        // dropped (rooted-and-cleared, or its fork abandoned) before the job
+        // runs. In that case, skip the job.
         let Some(bank) = bank.upgrade() else { return };
         let program_loader = bank.get_transaction_processor();
         // Top-level programs are the critical ones: compiling them first gives
@@ -174,17 +174,48 @@ const SPECULATIVE_JIT_NUM_WORKERS: usize = 4;
 /// that window while still absorbing the observed bursts.
 const SPECULATIVE_JIT_JOB_QUEUE_CAPACITY: usize = 16;
 
-fn speculative_jit_worker_pool() -> &'static WorkerPool<SpeculativeJitJob> {
-    // Programs are queued in first-use order, maximizing the chance that the next cold program
-    // is ready before execution reaches it.
-    static SPECULATIVE_JIT_WORKER_POOL: OnceLock<WorkerPool<SpeculativeJitJob>> = OnceLock::new();
-    SPECULATIVE_JIT_WORKER_POOL.get_or_init(|| {
-        WorkerPool::new(
-            "solSpecJit",
-            SPECULATIVE_JIT_NUM_WORKERS,
-            SPECULATIVE_JIT_JOB_QUEUE_CAPACITY,
-        )
-    })
+/// Workers compiling programs ahead of their execution during replay.
+///
+/// Owned by the component driving replay (`ReplayStage`, or startup replay)
+/// and passed down to `confirm_slot_entries()`, which queues one job per batch
+/// of entries. Dropping the pool stops its workers once the queued jobs finish.
+pub struct SpeculativeJitWorkerPool {
+    inner: WorkerPool<SpeculativeJitJob>,
+}
+
+impl Default for SpeculativeJitWorkerPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SpeculativeJitWorkerPool {
+    pub fn new() -> Self {
+        Self {
+            inner: WorkerPool::new(
+                "solSpecJit",
+                SPECULATIVE_JIT_NUM_WORKERS,
+                SPECULATIVE_JIT_JOB_QUEUE_CAPACITY,
+            ),
+        }
+    }
+
+    /// Queues a job without blocking. Returns `false` if the job was dropped,
+    /// because the queue is full.
+    fn try_schedule(&self, slot: Slot, job: SpeculativeJitJob) -> bool {
+        // Programs are queued in first-use order, maximizing the chance that the
+        // next cold program is ready before execution reaches it.
+        match self.inner.try_send(job) {
+            Ok(()) => true,
+            Err(err) => {
+                debug!(
+                    "Failed to schedule a speculative JIT job at slot {slot}, programs are not \
+                     going to be precompiled: {err}"
+                );
+                false
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -467,6 +498,7 @@ pub(crate) fn process_blockstore_for_bank_0(
 
     info!("Processing ledger for slot 0...");
     let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(num_cpus::get());
+    let speculative_jit_worker_pool = SpeculativeJitWorkerPool::new();
     process_bank_0(
         &bank_forks
             .read()
@@ -476,6 +508,7 @@ pub(crate) fn process_blockstore_for_bank_0(
         compute_shred_version(&genesis_config.hash(), Some(&hard_forks)),
         blockstore,
         &replay_verification_worker_pool,
+        &speculative_jit_worker_pool,
         opts,
         transaction_status_sender,
         entry_notification_sender,
@@ -541,12 +574,14 @@ pub fn process_blockstore_from_root(
         .unwrap_or_else(|_| panic!("Failed to get meta for slot {start_slot}"))
     {
         let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(num_cpus::get());
+        let speculative_jit_worker_pool = SpeculativeJitWorkerPool::new();
         load_frozen_forks(
             bank_forks,
             shred_version,
             &start_slot_meta,
             blockstore,
             &replay_verification_worker_pool,
+            &speculative_jit_worker_pool,
             leader_schedule_cache,
             opts,
             transaction_status_sender,
@@ -664,6 +699,7 @@ fn confirm_full_slot(
     bank: &BankWithScheduler,
     shred_version: u16,
     replay_verification_worker_pool: &ReplayVerificationWorkerPool,
+    speculative_jit_worker_pool: &SpeculativeJitWorkerPool,
     opts: &ProcessOptions,
     progress: &mut ConfirmationProgress,
     entry_notification_sender: Option<&EntryNotifierSender>,
@@ -689,6 +725,7 @@ fn confirm_full_slot(
         bank,
         shred_version,
         replay_verification_worker_pool,
+        speculative_jit_worker_pool,
         &mut confirmation_timing,
         progress,
         skip_verification,
@@ -1497,6 +1534,7 @@ pub fn confirm_slot(
     bank: &BankWithScheduler,
     shred_version: u16,
     replay_verification_worker_pool: &ReplayVerificationWorkerPool,
+    speculative_jit_worker_pool: &SpeculativeJitWorkerPool,
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
     skip_verification: bool,
@@ -1582,6 +1620,7 @@ pub fn confirm_slot(
                 confirm_slot_entries(
                     bank,
                     replay_verification_worker_pool,
+                    speculative_jit_worker_pool,
                     (entries, num_shreds as u64, slot_full),
                     timing,
                     progress,
@@ -1658,6 +1697,7 @@ pub fn confirm_slot(
 fn confirm_slot_entries(
     bank: &BankWithScheduler,
     replay_verification_worker_pool: &ReplayVerificationWorkerPool,
+    speculative_jit_worker_pool: &SpeculativeJitWorkerPool,
     slot_entries_load_result: (Vec<EntryView<Bytes>>, u64, bool),
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
@@ -1841,18 +1881,15 @@ fn confirm_slot_entries(
     guess_program_candidates.retain(|key| !top_level_programs.contains(key));
     if !top_level_programs.is_empty() || !guess_program_candidates.is_empty() {
         let bank: Weak<Bank> = Arc::downgrade(&bank);
-        if let Err(err) = speculative_jit_worker_pool().try_send(SpeculativeJitJob {
+        let speculative_jit_job = SpeculativeJitJob {
             bank,
             top_level_programs,
             guess_program_candidates,
-        }) {
-            *num_speculative_jit_jobs_dropped += 1;
-            debug!(
-                "Failed to schedule a speculative JIT job at slot {slot}, programs are not going \
-                 to be precompiled: {err}"
-            );
-        } else {
+        };
+        if speculative_jit_worker_pool.try_schedule(slot, speculative_jit_job) {
             *num_speculative_jit_jobs_scheduled += 1;
+        } else {
+            *num_speculative_jit_jobs_dropped += 1;
         }
     }
 
@@ -1910,6 +1947,7 @@ fn process_bank_0(
     shred_version: u16,
     blockstore: &Blockstore,
     replay_verification_worker_pool: &ReplayVerificationWorkerPool,
+    speculative_jit_worker_pool: &SpeculativeJitWorkerPool,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
@@ -1922,6 +1960,7 @@ fn process_bank_0(
         bank0,
         shred_version,
         replay_verification_worker_pool,
+        speculative_jit_worker_pool,
         opts,
         &mut progress,
         entry_notification_sender,
@@ -2163,6 +2202,7 @@ fn load_frozen_forks(
     start_slot_meta: &SlotMeta,
     blockstore: &Blockstore,
     replay_verification_worker_pool: &ReplayVerificationWorkerPool,
+    speculative_jit_worker_pool: &SpeculativeJitWorkerPool,
     leader_schedule_cache: &LeaderScheduleCache,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
@@ -2261,6 +2301,7 @@ fn load_frozen_forks(
                 &bank,
                 shred_version,
                 replay_verification_worker_pool,
+                speculative_jit_worker_pool,
                 opts,
                 &mut progress,
                 transaction_status_sender,
@@ -2571,6 +2612,7 @@ pub fn process_single_slot(
     bank: &BankWithScheduler,
     shred_version: u16,
     replay_verification_worker_pool: &ReplayVerificationWorkerPool,
+    speculative_jit_worker_pool: &SpeculativeJitWorkerPool,
     opts: &ProcessOptions,
     progress: &mut ConfirmationProgress,
     transaction_status_sender: Option<&TransactionStatusSender>,
@@ -2606,6 +2648,7 @@ pub fn process_single_slot(
         bank,
         shred_version,
         replay_verification_worker_pool,
+        speculative_jit_worker_pool,
         opts,
         progress,
         entry_notification_sender,
@@ -4650,11 +4693,13 @@ pub mod tests {
             ..ProcessOptions::default()
         };
         let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+        let speculative_jit_worker_pool = SpeculativeJitWorkerPool::new();
         process_bank_0(
             &bank0,
             compute_shred_version(&genesis_config.hash(), None),
             &blockstore,
             &replay_verification_worker_pool,
+            &speculative_jit_worker_pool,
             &opts,
             None,
             None,
@@ -4670,6 +4715,7 @@ pub mod tests {
             &bank1,
             compute_shred_version(&genesis_config.hash(), None),
             &replay_verification_worker_pool,
+            &speculative_jit_worker_pool,
             &opts,
             &mut ConfirmationProgress::new(bank0_last_blockhash),
             None,
@@ -5271,10 +5317,12 @@ pub mod tests {
         progress: &mut ConfirmationProgress,
     ) -> result::Result<(), BlockstoreProcessorError> {
         let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+        let speculative_jit_worker_pool = SpeculativeJitWorkerPool::new();
         let bank = take_bank_with_scheduler_for_tests(pool, bank.clone());
         let result = confirm_slot_entries(
             &bank,
             &replay_verification_worker_pool,
+            &speculative_jit_worker_pool,
             (entry_views_for_tests(slot_entries), 0, slot_full),
             &mut ConfirmationTiming::default(),
             progress,
@@ -6027,6 +6075,7 @@ pub mod tests {
     #[test]
     fn test_confirm_slot_block_with_markers_fails_without_alpenglow() {
         let genesis_config = create_tower_genesis_config(100 * LAMPORTS_PER_SOL).genesis_config;
+        let speculative_jit_worker_pool = SpeculativeJitWorkerPool::new();
         let (blockstore, genesis_config, _ledger_path, replay_verification_worker_pool) =
             confirm_slot_with_block_markers_common(true, genesis_config);
 
@@ -6045,6 +6094,7 @@ pub mod tests {
             &bank1,
             compute_shred_version(&genesis_config.hash(), None),
             &replay_verification_worker_pool,
+            &speculative_jit_worker_pool,
             &mut ConfirmationTiming::default(),
             &mut ConfirmationProgress::new(bank0.last_blockhash()),
             false,
@@ -6060,6 +6110,7 @@ pub mod tests {
     #[test]
     fn test_confirm_slot_block_with_markers_succeeds_with_alpenglow() {
         let genesis_config = create_genesis_config(100 * LAMPORTS_PER_SOL).genesis_config;
+        let speculative_jit_worker_pool = SpeculativeJitWorkerPool::new();
         let (blockstore, genesis_config, _ledger_path, replay_verification_worker_pool) =
             confirm_slot_with_block_markers_common(true, genesis_config);
 
@@ -6081,6 +6132,7 @@ pub mod tests {
             &bank1,
             compute_shred_version(&genesis_config.hash(), None),
             &replay_verification_worker_pool,
+            &speculative_jit_worker_pool,
             &mut ConfirmationTiming::default(),
             &mut ConfirmationProgress::new(bank0.last_blockhash()),
             true,
@@ -6140,6 +6192,7 @@ pub mod tests {
     #[test]
     fn test_confirm_slot_rejects_alpentick_before_footer() {
         let genesis_config = create_genesis_config(100 * LAMPORTS_PER_SOL).genesis_config;
+        let speculative_jit_worker_pool = SpeculativeJitWorkerPool::new();
         let (blockstore, genesis_config, _ledger_path, replay_verification_worker_pool) =
             confirm_slot_with_block_markers_common(false, genesis_config);
 
@@ -6154,6 +6207,7 @@ pub mod tests {
             &bank1,
             compute_shred_version(&genesis_config.hash(), None),
             &replay_verification_worker_pool,
+            &speculative_jit_worker_pool,
             &mut ConfirmationTiming::default(),
             &mut ConfirmationProgress::new(bank0.last_blockhash()),
             true,
@@ -6519,11 +6573,13 @@ pub mod tests {
         };
         let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
         let replay_verification_worker_pool = ReplayVerificationWorkerPool::new(1);
+        let speculative_jit_worker_pool = SpeculativeJitWorkerPool::new();
         process_bank_0(
             &bank0,
             compute_shred_version(&genesis_config.hash(), None),
             &blockstore,
             &replay_verification_worker_pool,
+            &speculative_jit_worker_pool,
             &opts,
             None,
             None,

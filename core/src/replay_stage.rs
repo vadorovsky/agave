@@ -65,7 +65,7 @@ use {
         blockstore_processor::{
             self, AsyncVerificationProgress, BlockstoreProcessorError, ChainedBlockIdCheck,
             ConfirmationProgress, ExecuteBatchesInternalMetrics, ReplaySlotStats,
-            ReplayVerificationWorkerPool, check_chained_block_id,
+            ReplayVerificationWorkerPool, SpeculativeJitWorkerPool, check_chained_block_id,
         },
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
@@ -282,6 +282,7 @@ struct ProcessActiveBanksContext {
     votor_event_sender: VotorEventSender,
     replay_mode: ForkReplayMode,
     replay_verification_worker_pool: ReplayVerificationWorkerPool,
+    speculative_jit_worker_pool: SpeculativeJitWorkerPool,
     migration_status: Arc<MigrationStatus>,
 }
 
@@ -930,6 +931,7 @@ impl ReplayStage {
             };
             let replay_verification_worker_pool =
                 ReplayVerificationWorkerPool::new(replay_transactions_threads.get());
+            let speculative_jit_worker_pool = SpeculativeJitWorkerPool::new();
 
             let process_active_banks_context = ProcessActiveBanksContext {
                 bank_forks: bank_forks.clone(),
@@ -947,6 +949,7 @@ impl ReplayStage {
                 votor_event_sender: votor_event_sender.clone(),
                 replay_mode,
                 replay_verification_worker_pool,
+                speculative_jit_worker_pool,
                 migration_status: migration_status.clone(),
             };
             let process_bank_forks_context = ProcessBankForksContext {
@@ -3171,6 +3174,7 @@ impl ReplayStage {
             bank,
             my_shred_version,
             &process_active_banks_context.replay_verification_worker_pool,
+            &process_active_banks_context.speculative_jit_worker_pool,
             &mut w_replay_stats,
             &mut w_replay_progress,
             false,
