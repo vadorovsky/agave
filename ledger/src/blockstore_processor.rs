@@ -1792,7 +1792,7 @@ fn confirm_slot_entries(
             top_level_programs,
             guess_program_candidates,
         }) {
-            warn!(
+            debug!(
                 "Failed to schedule a speculative JIT job at slot {slot}, programs are not going \
                  to be precompiled: {err}"
             );
