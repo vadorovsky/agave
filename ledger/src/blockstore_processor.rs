@@ -144,14 +144,47 @@ impl WorkerJob for SpeculativeJitJob {
     }
 }
 
+/// Number of threads compiling programs speculatively.
+const SPECULATIVE_JIT_NUM_WORKERS: usize = 4;
+
+/// Maximum number of speculative JIT jobs (one per `confirm_slot_entries()`
+/// call) waiting for a worker. When the queue is full, new jobs are dropped
+/// and their programs are compiled on demand by the execution threads, exactly
+/// as without speculation.
+///
+/// The queue must stay short, because a speculative job is only useful if it
+/// compiles a program before execution reaches it, and that window is small.
+/// Measured on a mainnet replay profile (60 s, ~41 jobs/s):
+///
+/// - A job takes 0.6-0.8 ms on average and ~1.2 ms at p90 (p99 ~7 ms). Most of
+///   that is loading program accounts. Programs that are already cached are
+///   skipped.
+/// - Execution threads start executing a batch ~0.1 ms (p90) after the job is
+///   queued. On-demand compilations that speculation failed to prevent started
+///   0.6 ms (p50) and 4.8 ms (p90) after the job was queued. Replay execution
+///   of the entries stays busy for 0.8 ms (p50) and 5.3 ms (p90) after the job
+///   was queued.
+/// - Arrivals are bursty: up to 13 jobs were queued within 10 ms, and up to 15
+///   within 50 ms.
+///
+/// So a job that waits more than ~5 ms behind other jobs almost always loses
+/// the race against on-demand compilation and only wastes CPU and account
+/// loads. With `SPECULATIVE_JIT_NUM_WORKERS` workers and the p90 job duration,
+/// a full queue of 16 jobs drains in 16 * 1.2 ms / 4 = ~5 ms, which matches
+/// that window while still absorbing the observed bursts.
+const SPECULATIVE_JIT_JOB_QUEUE_CAPACITY: usize = 16;
+
 fn speculative_jit_worker_pool() -> &'static WorkerPool<SpeculativeJitJob> {
-    // A small pool bounds the CPU cost of best-effort compilation while transaction
-    // execution is already consuming the replay scheduler's workers. Programs are queued
-    // in first-use order, maximizing the chance that the next cold program is ready
-    // before execution reaches it.
+    // Programs are queued in first-use order, maximizing the chance that the next cold program
+    // is ready before execution reaches it.
     static SPECULATIVE_JIT_WORKER_POOL: OnceLock<WorkerPool<SpeculativeJitJob>> = OnceLock::new();
-    SPECULATIVE_JIT_WORKER_POOL
-        .get_or_init(|| WorkerPool::new("solSpecJit", 4, MAX_FEC_SETS_PER_SLOT as usize))
+    SPECULATIVE_JIT_WORKER_POOL.get_or_init(|| {
+        WorkerPool::new(
+            "solSpecJit",
+            SPECULATIVE_JIT_NUM_WORKERS,
+            SPECULATIVE_JIT_JOB_QUEUE_CAPACITY,
+        )
+    })
 }
 
 #[derive(Default)]
