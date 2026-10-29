@@ -767,6 +767,13 @@ pub struct ConfirmationTiming {
 
     /// Number of times this slot was switched from an alternate location.
     pub num_bank_switches: u64,
+
+    /// Number of speculative JIT jobs queued for this slot.
+    pub num_speculative_jit_jobs_scheduled: u64,
+
+    /// Number of speculative JIT jobs for this slot that could not be queued, because the job
+    /// queue was full. Programs of such jobs are compiled on demand during execution.
+    pub num_speculative_jit_jobs_dropped: u64,
 }
 
 impl Default for ConfirmationTiming {
@@ -781,6 +788,8 @@ impl Default for ConfirmationTiming {
             fetch_fail_elapsed: 0,
             batch_execute: BatchExecutionTiming::default(),
             num_bank_switches: 0,
+            num_speculative_jit_jobs_scheduled: 0,
+            num_speculative_jit_jobs_dropped: 0,
         }
     }
 }
@@ -944,6 +953,16 @@ impl ReplaySlotStats {
                 (replay_elapsed, self.replay_elapsed as i64, i64),
                 ("execute_batches_us", execute_batches_us, Option<i64>),
                 ("num_bank_switches", self.num_bank_switches as i64, i64),
+                (
+                    "num_speculative_jit_jobs_scheduled",
+                    self.num_speculative_jit_jobs_scheduled as i64,
+                    i64
+                ),
+                (
+                    "num_speculative_jit_jobs_dropped",
+                    self.num_speculative_jit_jobs_dropped as i64,
+                    i64
+                ),
                 (
                     "replay_total_elapsed",
                     self.started.elapsed().as_micros() as i64,
@@ -1668,6 +1687,8 @@ fn confirm_slot_entries(
         replay_elapsed,
         poh_verify_elapsed,
         transaction_verify_elapsed,
+        num_speculative_jit_jobs_scheduled,
+        num_speculative_jit_jobs_dropped,
         ..
     } = timing;
 
@@ -1841,10 +1862,13 @@ fn confirm_slot_entries(
             top_level_programs,
             guess_program_candidates,
         }) {
+            *num_speculative_jit_jobs_dropped += 1;
             debug!(
                 "Failed to schedule a speculative JIT job at slot {slot}, programs are not going \
                  to be precompiled: {err}"
             );
+        } else {
+            *num_speculative_jit_jobs_scheduled += 1;
         }
     }
 
