@@ -117,9 +117,9 @@ struct SpeculativeJitJob {
     /// messages. These are compiled first because they are the programs
     /// execution is certain to reach.
     top_level_programs: IndexSet<Pubkey>,
-    /// All remaining account keys. These are best-effort guesses at CPI
-    /// program IDs: which of them are programs is only known at runtime, so
-    /// they are compiled after the top-level programs.
+    /// Remaining read-only, non-signer account keys. These are best-effort
+    /// guesses at CPI program IDs: which of them are programs is only known at
+    /// runtime, so they are compiled after the top-level programs.
     guess_program_candidates: IndexSet<Pubkey>,
 }
 
@@ -1848,7 +1848,19 @@ fn confirm_slot_entries(
                 // to retrieve them is to retrieve all account keys. Everything that is not
                 // a top-level program is a best-effort guess, collected for the second
                 // (best-effort) speculative pass.
-                guess_program_candidates.extend(tx.account_keys().iter().copied());
+                //
+                // A program passed to a transaction for CPI is not modified by it, so it
+                // is a read-only, non-signer account. Skip signers and writable accounts,
+                // which are the vast majority of account keys, to avoid loading them in
+                // the best-effort pass. A program passed as writable or as a signer is
+                // just not compiled speculatively, and gets compiled on demand.
+                guess_program_candidates.extend(
+                    tx.account_keys()
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| !tx.is_signer(*index) && !tx.is_writable(*index))
+                        .map(|(_, key)| *key),
+                );
             }
         }
     }
